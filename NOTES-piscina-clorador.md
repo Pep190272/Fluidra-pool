@@ -131,3 +131,117 @@ seguridad: **[`plan-bajar-alcalinidad-piscina-2026-08-11.md`](plan-bajar-alcalin
       puede tener otro origen).
 - [ ] Comprar 2 garrafas de 20 L de pH Minus.
 - [ ] Poner en marcha la descalcificadora — por la casa y por la instalación, no por el TAC.
+
+---
+
+# Episodio 3 — 2026-08-15: la integración "no expone datos"
+
+## Síntoma
+Home Assistant no muestra valores del clorador, pero el grupo de filtración funciona y la bomba
+de pH dosifica. Además, cerca de consigna salta una alarma que **para la bomba**, con la garrafa
+por debajo de un cuarto.
+
+## Método
+La extensión de navegador **no** sirve para esto: no consigue inyectar script en `localhost:8123`
+bajo Brave, ni con permiso de sitio concedido (timeout de 5 s, y 45 s esperando `document_idle`).
+
+La vía que funciona es la **API REST de HA** con un token de larga duración:
+
+| Endpoint | Para qué |
+|---|---|
+| `GET /api/states` | estado y atributos de todas las entidades |
+| `GET /api/config/config_entries/entry` | si el config entry cargó y por qué falla si no |
+| `GET /api/error_log` | avisos del coordinator |
+| `GET /api/history/period/…` | cuándo cambió cada estado |
+| `POST /api/template` | `integration_entities('fluidra_pool')` + `device_attr()` |
+| `POST /api/config/config_entries/entry/{id}/reload` | recargar sin reiniciar HA |
+
+## Trampa de diagnóstico
+
+Los `entity_id` de esta integración **no contienen la palabra "fluidra"**:
+
+```
+sensor.piscina_chlorinator_ph          number.piscina_chlorinator_consigna_ph
+binary_sensor.piscina_chlorinator_alarma   sensor.casa_estado_de_la_piscina
+```
+
+Filtrar `/api/states` por "fluidra" da **falso negativo**: parece que no existe ninguna entidad
+cuando en realidad hay 13 registradas. Filtrar por `integration_entities('fluidra_pool')`.
+
+## Diagnóstico (con evidencia)
+
+La integración **no está rota**: config entry en `state=loaded`, autenticación correcta,
+las 13 entidades presentes en el registro.
+
+El clorador **dejó de subir telemetría a la nube de Fluidra el 2026-08-13 a las 15:33 local**.
+
+Secuencia tras recargar el config entry:
+
+```
+09:14:04 UTC  reload  → todo disponible: pH 8.87, ORP 620, cloración 60 %, device_offline=False
+09:15:46 UTC  +100 s  → unavailable de nuevo, device_offline=True
+```
+
+Un poll bueno y se cae. El mismo patrón del día 13 (dato a las 13:33:53, muerto a las 13:34:27,
+**34 segundos**). El historial lo confirma: `signal_excellent` → `unavailable`, sin degradación
+previa. No es cobertura que se va apagando; es un corte seco.
+
+**Prueba de que es caché, no telemetría:** los valores devueltos son idénticos a los del día 13,
+con la temperatura del agua clavada en 28,7 °C tras 48 horas. La nube sirve el **último snapshot
+conocido** en la primera petición de cada sesión nueva. El propio `signal_excellent` forma parte
+de ese snapshot rancio, así que **no prueba conectividad actual**.
+
+Qué distingue lo vivo de lo muerto:
+
+| Entidades | Origen | Estado |
+|---|---|---|
+| `sensor.casa_*`, salinidad | datos de piscina a nivel nube | ✅ se actualizan |
+| pH, ORP, temperatura, alarma, todos los `number.*` | componentes del dispositivo | ❌ congelados |
+
+El único camino cortado es el que pasa por el clorador. **El equipo funciona; lo que está caído
+es su módulo de comunicación.** De ahí la aparente contradicción "el grupo va bien" + "no expone
+datos": son las dos caras de lo mismo.
+
+Recargar la integración **no lo arregla** — solo provoca una lectura de caché.
+
+## La alarma que para la bomba
+
+Del último snapshot:
+
+| Dato | Valor |
+|---|---|
+| Alarma activa | **`HIGH PH`** ("High pH") — 1 alarma |
+| pH | **8,87** |
+| Consigna pH | 7,61 (rango configurable 7,0–7,8) |
+| ORP | 620 mV |
+| Nivel de cloración | 60 % |
+| Consigna ORP | 750 mV |
+
+**No es alarma de nivel de producto.** Es la protección por pH alto del episodio 2: la bomba
+dosifica, no consigue bajar de 8,87 a 7,61 porque el TAC 240 lo tampona, y el equipo se
+autobloquea. El nivel de la garrafa no es la causa del paro.
+
+Aun así conviene rellenarla y **no operar por debajo de un cuarto**: ahí la lanza de aspiración
+empieza a tragar aire, el ácido sulfúrico al 14,4 % desgasifica, la peristáltica pierde cebado y
+gira sin trasegar producto. Eso produce el mismo bloqueo por otra vía, con la manguera perfecta.
+
+**El pH se está escapando: 8,28 (11-ago) → 8,87 (13-ago).** Mientras no baje la alcalinidad, esto
+se repite.
+
+## Versiones
+
+| Dónde | Versión |
+|---|---|
+| Integración en ejecución (HACS ← upstream) | **v2.78.3** |
+| Este fork antes de sincronizar | v2.40.7 (275 commits atrás) |
+
+El aviso `No component data received … after 3 consecutive polls` que aparece en el log **no
+existe** en el código de v2.40.7. Depurar contra un checkout desincronizado lleva a conclusiones
+falsas: sincronizar el fork antes de tocar nada.
+
+## Pendiente
+- [ ] **Reconectar el módulo de comunicación del clorador**: cortar alimentación del equipo,
+      esperar un minuto y volver a dar. Si no revive, re-vincular el WiFi desde la app de Fluidra.
+- [ ] Revocar el token de larga duración de HA usado para este diagnóstico.
+- [ ] Rellenar la garrafa de pH Minus (regla: nunca por debajo de 1/4).
+- [ ] Retomar el plan de alcalinidad del episodio 2 — es la causa que sigue viva.
