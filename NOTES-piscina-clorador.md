@@ -515,10 +515,64 @@ capacidad iguala la subida de la célula con TAC 240.
 Subir la consigna no fue solo silenciar la alarma: fue colocarla donde el equipo puede trabajar. Al
 bajar el TAC, ese punto de equilibrio baja con él y la consigna podrá volver a 7,2–7,4.
 
+## Horas de filtración: medidas, no estimadas
+
+El clorador cae con el grupo, así que **sus transiciones a `unknown` dibujan el horario real del
+reloj** sin mirar el cuadro. Basta con leer el historial de `binary_sensor.piscina_chlorinator_alarma`:
+`unknown` = sin corriente.
+
+Medido el 2026-08-15:
+
+```
+15:09:40   →  unknown     el grupo se para
+17:02:53   →  off         el grupo arranca
+              ─────────
+              1 h 53 min de parada  ≈  2 h
+```
+
+Con ~2 h encendido, el ciclo real es **2 h ON / 2 h OFF = 12 h de filtración al día**, no las 16 h
+que se habían supuesto.
+
+> Ese repunte aislado de las 15:42 (dato cacheado en mitad de la parada) es justo lo que puede
+> falsear esta lectura. Buscar transiciones **sostenidas**, no puntos sueltos.
+
+### Lo que cuesta el déficit, medido
+
+```
+antes de parar   (15:09)   ORP 680 mV
+al volver        (17:02)   ORP 644 mV     ← por debajo del suelo de 650
+5 min después    (17:07)   ORP 657 mV     ← recupera rápido con la célula en marcha
+```
+
+**36 mV perdidos en dos horas sin filtrar.** Con la célula parada no se produce cloro y a 30 °C con
+sol el que hay se consume. Y la recuperación de 13 mV en cinco minutos demuestra que al equipo **no
+le falta capacidad, le faltan horas**.
+
+Ahí está también la explicación de por qué el ORP se estancaba en 680 sin llegar a los 750 de
+consigna: no era solo el pH alto.
+
+### La cuenta
+
+> **Regla: horas de filtración ≈ temperatura del agua / 2.**
+
+| | |
+|---|---|
+| Temperatura del agua | 30,8 °C |
+| Filtración necesaria | **≈ 15 h/día** |
+| Filtración actual | 12 h/día |
+| Déficit | **3 h/día** |
+
+Corrección al alza de las paradas: pasar de 2 h a 1 h deja 2 h ON / 1 h OFF = **16 h/día**. El reloj
+es manual, con segmentos de 15 minutos.
+
+El reparto definitivo debe cumplir dos cosas a la vez: las 15–16 h diarias, y **ventanas con la
+depuradora en marcha que cubran las tomas del tratamiento** (mañana, tarde y noche, separadas 6–8 h,
+con 1 h de filtración posterior a cada toma).
+
 ## Conclusión
 
 Las tres alarmas de este verano —junio, 11 de agosto y hoy— salen del mismo sitio. Con la bomba
 sana, producto disponible e inyección limpia, `PUMPSTOP PH` es un **síntoma de alcalinidad alta**, no
 un fallo mecánico.
 
-**El TAC es lo único que queda por arreglar.**
+**El TAC es lo único que queda por arreglar** — y, en segundo plano, las horas de filtración.
