@@ -173,7 +173,9 @@ cuando en realidad hay 13 registradas. Filtrar por `integration_entities('fluidr
 La integración **no está rota**: config entry en `state=loaded`, autenticación correcta,
 las 13 entidades presentes en el registro.
 
-El clorador **dejó de subir telemetría a la nube de Fluidra el 2026-08-13 a las 15:33 local**.
+El clorador **ya estaba sirviendo datos cacheados en la primera lectura que HA consiguió**, el
+2026-08-13 a las 15:33 local. No se puede afirmar que el corte empezara ahí: la base de datos del
+recorder arranca ese mismo día, así que no hay visibilidad anterior. El corte puede ser más viejo.
 
 Secuencia tras recargar el config entry:
 
@@ -239,9 +241,67 @@ El aviso `No component data received … after 3 consecutive polls` que aparece 
 existe** en el código de v2.40.7. Depurar contra un checkout desincronizado lleva a conclusiones
 falsas: sincronizar el fork antes de tocar nada.
 
+## Causa raíz: el SSID guardado ya no existe
+
+**Cambió el nombre de la red WiFi de 2,4 GHz.** La contraseña no, y el router es el mismo. El módulo
+arranca, escanea, no encuentra la red que tiene memorizada y se rinde. Nunca se asocia, nunca llega
+a la nube.
+
+Es la única hipótesis que explica las cuatro observaciones a la vez:
+
+| Observación | Qué descarta |
+|---|---|
+| La contraseña no cambió | no es fallo de credenciales |
+| El router es el mismo | no es hardware de red |
+| El equipo arranca y dosifica | no es el módulo, que está vivo |
+| La nube nunca lo ve | nunca llegó a asociarse |
+
+### El ciclo de corriente no es la solución
+
+El clorador **cae con el grupo** (misma línea, enclavado con la bomba). Con un ciclo de 2 h
+encendido / 2 h apagado son **12 arranques al día**: más de veinte ciclos completos desde el 13 de
+agosto, sin recuperarse ni una vez. Descartado.
+
+> Ese enclavamiento es correcto y **no debe separarse**. La célula de electrólisis no puede
+> funcionar sin caudal: se recalienta, se incrusta, degrada las placas de titanio y genera cloro gas
+> en un tubo cerrado.
+
+### Ojo con la banda
+
+Estos módulos hablan **solo 2,4 GHz** — por coste, pero sobre todo por alcance: 5 GHz no atraviesa
+la obra hasta el cuarto técnico. Si el router emite las dos bandas con nombres distintos (`RED` y
+`RED-5G`), la buena es la que **no** lleva el sufijo. Conectar el equipo a la de 5 GHz no funciona
+nunca, con contraseña correcta o sin ella.
+
+### El aviso de pH alto de la app no es un falso positivo
+
+La app oficial y Home Assistant **no son fuentes independientes**: leen el mismo registro de la
+nube. Las dos repiten la foto congelada, con la alarma `HIGH PH` que sí era real cuando se cortó la
+comunicación.
+
+La prueba: el panel del equipo marcaba **7,68** mientras la nube seguía diciendo **8,87**. Esa
+discrepancia es, exactamente, la medida del corte. La sonda no miente; la nube enseña una
+fotografía vieja.
+
+## Lo que HA no puede ver
+
+No hay **ningún** sensor de la piscina independiente del clorador: ni enchufe con medida, ni
+contacto en el cuadro. Todo llega por la nube de Fluidra a través del clorador, que es justo lo
+roto. HA no puede detectar siquiera si el grupo está en marcha.
+
+Un enchufe inteligente con medida de consumo en la línea del grupo resolvería esa ceguera: daría
+una fuente que no depende de la nube de nadie, y permitiría distinguir "la bomba no funciona" de
+"el clorador no reporta".
+
 ## Pendiente
-- [ ] **Reconectar el módulo de comunicación del clorador**: cortar alimentación del equipo,
-      esperar un minuto y volver a dar. Si no revive, re-vincular el WiFi desde la app de Fluidra.
+- [ ] **Reemparejar el WiFi del clorador** con el nombre de red actual de 2,4 GHz. Es una acción
+      física: el SSID vive en el módulo del equipo y solo se cambia desde el panel o en modo
+      emparejamiento. La nube no sirve como vía — haría falta estar conectado para recibir la
+      configuración, que es precisamente lo que falta.
+      Condiciones: grupo encendido, móvil en la banda de 2,4 GHz, y empezar al **principio** de la
+      ventana de 2 h para que no se corte la corriente a mitad del proceso.
+- [ ] Verificar después desde HA: `device_offline` a `False` **y** temperatura del agua distinta de
+      28,7 °C. El segundo dato es el que manda.
 - [ ] Revocar el token de larga duración de HA usado para este diagnóstico.
 - [ ] Rellenar la garrafa de pH Minus (regla: nunca por debajo de 1/4).
 - [ ] Retomar el plan de alcalinidad del episodio 2 — es la causa que sigue viva.
