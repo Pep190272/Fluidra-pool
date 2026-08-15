@@ -259,8 +259,8 @@ Es la única hipótesis que explica las cuatro observaciones a la vez:
 ### El ciclo de corriente no es la solución
 
 El clorador **cae con el grupo** (misma línea, enclavado con la bomba). Con un ciclo de 2 h
-encendido / 2 h apagado son **12 arranques al día**: más de veinte ciclos completos desde el 13 de
-agosto, sin recuperarse ni una vez. Descartado.
+encendido / 1 h apagado son **8 arranques al día** y 16 h de filtración: más de dieciséis ciclos
+completos desde el 13 de agosto, sin recuperarse ni una vez. Descartado.
 
 > Ese enclavamiento es correcto y **no debe separarse**. La célula de electrólisis no puede
 > funcionar sin caudal: se recalienta, se incrusta, degrada las placas de titanio y genera cloro gas
@@ -293,15 +293,39 @@ Un enchufe inteligente con medida de consumo en la línea del grupo resolvería 
 una fuente que no depende de la nube de nadie, y permitiría distinguir "la bomba no funciona" de
 "el clorador no reporta".
 
+## Resuelto — 2026-08-15 13:04
+
+Reemparejado el WiFi del clorador con la red de 2,4 GHz actual, aprovechando el arranque del grupo
+de las 13:00. Verificación desde la API de HA a los pocos minutos:
+
+| Dato | Antes (foto congelada) | Después |
+|---|---|---|
+| `device_offline` | `True` | **`False`** |
+| Temperatura del agua | 28,7 °C (48 h clavada) | **29,2 °C** |
+| pH | 8,87 | **7,68** |
+| ORP | 620 mV | **640 mV** |
+| Salinidad | 5,14 | **5,46** |
+| Alarma | `HIGH PH` | **`off`**, `active_alarms: []` |
+
+La temperatura era la prueba: en cuanto se movió, los datos dejaron de ser caché. Y la nube pasó a
+decir **7,68**, exactamente lo que marcaba el panel del equipo mientras la nube seguía anclada en
+8,87. Ese hueco entre panel y nube era la medida del corte, y se cerró.
+
+La alarma `HIGH PH` desapareció sin intervención: no había avería, había un registro de hace dos
+días.
+
+**Método de verificación reutilizable:** ante cualquier sospecha de datos rancios, comparar la
+lectura del panel con la de la nube. Si difieren, el problema es de comunicación, no de sonda. Y
+vigilar un valor que cambie solo —la temperatura del agua sirve—: si lleva horas idéntico al
+decimal, es caché.
+
 ## Pendiente
-- [ ] **Reemparejar el WiFi del clorador** con el nombre de red actual de 2,4 GHz. Es una acción
-      física: el SSID vive en el módulo del equipo y solo se cambia desde el panel o en modo
-      emparejamiento. La nube no sirve como vía — haría falta estar conectado para recibir la
-      configuración, que es precisamente lo que falta.
-      Condiciones: grupo encendido, móvil en la banda de 2,4 GHz, y empezar al **principio** de la
-      ventana de 2 h para que no se corte la corriente a mitad del proceso.
-- [ ] Verificar después desde HA: `device_offline` a `False` **y** temperatura del agua distinta de
-      28,7 °C. El segundo dato es el que manda.
-- [ ] Revocar el token de larga duración de HA usado para este diagnóstico.
+- [x] ~~Reemparejar el WiFi del clorador~~ — hecho 2026-08-15.
+- [x] ~~Revocar el token de larga duración de HA~~ — hecho 2026-08-15.
+- [ ] Vigilar el ORP: 640 mV con consigna en 750 y producción al 60 %. Con el pH ya en rango debería
+      subir solo, porque el cloro recupera poder oxidante. Si no sube, revisar producción.
 - [ ] Rellenar la garrafa de pH Minus (regla: nunca por debajo de 1/4).
-- [ ] Retomar el plan de alcalinidad del episodio 2 — es la causa que sigue viva.
+- [ ] Retomar el plan de alcalinidad del episodio 2 — **es la única causa que sigue viva**. Con TAC
+      240 el pH volverá a escaparse y la alarma `HIGH PH` volverá a bloquear la bomba.
+- [ ] Valorar un enchufe con medida de consumo en la línea del grupo, para dejar de depender de la
+      nube como única fuente.
