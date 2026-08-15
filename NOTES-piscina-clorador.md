@@ -329,3 +329,101 @@ decimal, es caché.
       240 el pH volverá a escaparse y la alarma `HIGH PH` volverá a bloquear la bomba.
 - [ ] Valorar un enchufe con medida de consumo en la línea del grupo, para dejar de depender de la
       nube como única fuente.
+
+---
+
+# Episodio 4 — 2026-08-15: `PUMPSTOP PH` con la bomba sana
+
+Horas después de recuperar la conexión, con el equipo reportando en vivo, salta una alarma nueva.
+
+## Qué significa realmente `PUMPSTOP PH`
+
+> *"pH pump has run for too long without reaching the setpoint."*
+
+Es un **corte por tiempo máximo de dosificación**, no una alarma de nivel. El equipo **no tiene sonda
+de nivel** en la garrafa del tratamiento: lo único que sabe es que lleva demasiado rato bombeando sin
+que el pH llegue a consigna.
+
+> **Corrección a las notas de junio.** Allí se apuntó `PUMPSTOP PH` como "bidón vacío". Eso fue la
+> **causa** de aquella vez, no el **significado** de la alarma. Confundir las dos cosas lleva a
+> descartarla en falso cuando la garrafa tiene producto.
+
+## Descartes hechos con el equipo delante
+
+| Comprobación | Resultado |
+|---|---|
+| Tubo de aspiración con la bomba en marcha | **producto avanzando** → sí trasiega |
+| Punto de inyección | **sin costra blanca** → válvula no cristalizada |
+| Garrafa que alimenta la bomba | **queda un cuarto** → hay producto |
+| Panel vs nube | **7,66 = 7,66** → la sonda lee bien y el dato no está rancio |
+
+Entra ácido en la piscina y el pH no se mueve. **Eso no es una avería: es la definición de un
+tampón.**
+
+## La causa: un tira y afloja empatado
+
+```
+bomba de ácido  ──→ empuja el pH ABAJO
+célula al 60 %  ──→ empuja el pH ARRIBA   (electrólisis, continua)
+TAC 240         ──→ amortigua las dos
+                    ─────────────────────
+                    resultado neto: cero
+```
+
+pH clavado en **7,66** durante más de 37 min con consigna en 7,61, mientras ORP, temperatura y
+salinidad se actualizaban cada 35 s. La bomba dosifica, la célula compensa y el tampón se traga el
+resto.
+
+Por eso salta la alarma a los ~14 minutos, y por eso **volverá a saltar**. La protección funciona
+como debe: la máquina reconoce que no puede ganar y para antes de vaciar la garrafa en la piscina.
+
+## Decisión: subir la consigna a 7,7 temporalmente
+
+Con TAC 240 se está obligando al equipo a pelear por cinco centésimas inalcanzables. Cada intento
+son catorce minutos de bomba, producto quemado y una alarma más — y ese producto hace falta para el
+tratamiento de alcalinidad.
+
+El agua mientras tanto es segura: **pH 7,66 con ORP 678 y subiendo** (venía de 620). La desinfección
+funciona.
+
+Al terminar el tratamiento, con el TAC en 120, bajar la consigna a **7,2–7,4** como indica el plan:
+ahí el equipo sí podrá mantenerla, porque el agua habrá dejado de resistirse.
+
+Secuencia en el panel: `SET` → `+` → `SET`. **Nunca tocar `CAL`.** Alternativa exacta y sin menús:
+la entidad `number.piscina_chlorinator_consigna_ph` en Home Assistant (rango 7,0–7,8, paso 0,1).
+
+## Diagnóstico sin token de Home Assistant
+
+Cuando no hay token de larga duración, se puede leer todo desde el contenedor Docker:
+
+```bash
+docker logs --since 3h homeassistant      # ojo: el contenedor escribe en hora LOCAL, la API en UTC
+```
+
+Y la base de datos del recorder, en solo lectura y con HA en marcha:
+
+```bash
+docker exec homeassistant python3 -c "
+import sqlite3
+con = sqlite3.connect('file:/config/home-assistant_v2.db?mode=ro', uri=True)"
+```
+
+Tablas útiles: `states_meta` (entity_id ↔ metadata_id), `states` (state, last_updated_ts,
+attributes_id) y `state_attributes` (`shared_attrs`, JSON con `active_alarms` y `error_code`).
+
+## Truco de lectura: `last_updated` vs `last_reported`
+
+- `last_updated` — cuándo **cambió** el valor
+- `last_reported` — cuándo **llegó** el último sondeo, aunque el valor sea idéntico
+
+Si una entidad tiene `last_reported` muy anterior al de sus compañeras, el dato ha dejado de llegar.
+Si todas comparten `last_reported` y solo una tiene el `last_updated` viejo, esa magnitud
+simplemente no se mueve. **Son diagnósticos opuestos y se distinguen solo mirando los dos campos.**
+
+## Conclusión
+
+Las tres alarmas de este verano —junio, 11 de agosto y hoy— salen del mismo sitio. Con la bomba
+sana, producto disponible e inyección limpia, `PUMPSTOP PH` es un **síntoma de alcalinidad alta**, no
+un fallo mecánico.
+
+**El TAC es lo único que queda por arreglar.**
