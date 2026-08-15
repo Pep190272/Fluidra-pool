@@ -10,7 +10,13 @@ from homeassistant.helpers.update_coordinator import UpdateFailed
 import pytest
 
 from custom_components.fluidra_pool.api_resilience import FluidraConnectionError
+from custom_components.fluidra_pool.const import (
+    EMPTY_COMPONENT_FETCH_THRESHOLD,
+    OFFLINE_GRACE_POLLS,
+    STALE_DEVICE_THRESHOLD,
+)
 from custom_components.fluidra_pool.coordinator import FluidraDataUpdateCoordinator
+from custom_components.fluidra_pool.device_registry import DeviceIdentifier
 
 
 @pytest.fixture
@@ -76,7 +82,7 @@ class TestAsyncUpdateData:
         # Second update
         await coordinator._async_update_data()
         assert mock_api.get_pool_details.called
-        assert mock_api.poll_device_status.called
+        assert mock_api.poll_pool_device_statuses.called
 
     async def test_raises_auth_failed_on_invalid_token(
         self, coordinator: FluidraDataUpdateCoordinator, mock_api: AsyncMock
@@ -140,6 +146,31 @@ class TestProcessComponentState:
         coordinator._process_component_state(device, "pool_001", 13, {"reportedValue": 1})
         assert device["is_heating"] is True
 
+    async def test_component_60_z550_running_hours(self, coordinator: FluidraDataUpdateCoordinator):
+        """Z550iQ+ total running hours come from component 60 (Issue #88)."""
+        device = {
+            "device_id": "LD12345",
+            "name": "Z550iQ",
+            "family": "heat pump",
+            "type": "heat_pump",
+            "components": {},
+        }
+        coordinator._process_component_state(device, "pool_001", 60, {"reportedValue": 4321})
+        assert device["running_hours"] == 4321
+
+    async def test_component_61_z550_no_flow(self, coordinator: FluidraDataUpdateCoordinator):
+        """Z550iQ+ component 61 = 11 marks the no-flow state (Issue #88)."""
+        device = {
+            "device_id": "LD12345",
+            "name": "Z550iQ",
+            "family": "heat pump",
+            "type": "heat_pump",
+            "components": {},
+        }
+        coordinator._process_component_state(device, "pool_001", 61, {"reportedValue": 11})
+        assert device["z550_state_reported"] == 11
+        assert device["hvac_action"] == "no_flow"
+
     async def test_component_15_temperature(self, coordinator: FluidraDataUpdateCoordinator):
         device = {"device_id": "test", "type": "heat_pump", "components": {}}
         coordinator._process_component_state(device, "pool_001", 15, {"reportedValue": 290})
@@ -180,14 +211,10 @@ class TestProcessComponentState:
 
 
 class TestCleanupRemovedDevices:
-    """Test _cleanup_removed_devices best-effort behaviour."""
+    """Test _cleanup_removed_devices confirmation-based purge (stale-devices)."""
 
-    async def test_cleanup_swallows_registry_keyerror(self, hass: HomeAssistant, mock_api: AsyncMock):
-        """A KeyError from async_remove_device must not propagate / fail the poll (coordinator-4).
-
-        The device registry's async_remove_device raises a bare KeyError when a
-        device was removed concurrently; the best-effort cleanup must absorb it.
-        """
+    @staticmethod
+    def _coord(hass: HomeAssistant, mock_api: AsyncMock) -> FluidraDataUpdateCoordinator:
         entry = MagicMock()
         entry.entry_id = "entry_1"
         entry.options = {}  # Keep the default scan interval (avoid a MagicMock timedelta).
@@ -195,16 +222,25 @@ class TestCleanupRemovedDevices:
         # The base DataUpdateCoordinator overwrites config_entry from a ContextVar that
         # isn't set in tests; pin it back so cleanup runs instead of early-returning.
         coord.config_entry = entry
+        return coord
 
+    @staticmethod
+    def _device_entry() -> MagicMock:
         device_entry = MagicMock()
         device_entry.id = "dev_reg_1"
         device_entry.model = "Pump"  # Not a "Pool" parent, so it is eligible for removal.
         device_entry.identifiers = {("fluidra_pool", "serial_gone")}
+        return device_entry
 
-        dev_reg = MagicMock()
-        dev_reg.async_remove_device.side_effect = KeyError("already removed")
-        ent_reg = MagicMock()
-
+    @staticmethod
+    async def _run(
+        coord: FluidraDataUpdateCoordinator,
+        current_device_ids: set[str],
+        *,
+        device_entry: MagicMock,
+        dev_reg: MagicMock,
+        ent_reg: MagicMock,
+    ) -> None:
         module = "custom_components.fluidra_pool.coordinator.coordinator"
         with (
             patch(f"{module}.dr.async_get", return_value=dev_reg),
@@ -212,10 +248,75 @@ class TestCleanupRemovedDevices:
             patch(f"{module}.er.async_get", return_value=ent_reg),
             patch(f"{module}.er.async_entries_for_device", return_value=[]),
         ):
-            # "serial_gone" is absent from the current set → removal is attempted and raises.
-            await coord._cleanup_removed_devices(current_device_ids={"still_here"})
+            await coord._cleanup_removed_devices(current_device_ids=current_device_ids)
+
+    async def test_cleanup_waits_for_threshold_before_purge(self, hass: HomeAssistant, mock_api: AsyncMock):
+        """A device must be absent for STALE_DEVICE_THRESHOLD polls before it is purged."""
+        coord = self._coord(hass, mock_api)
+        device_entry = self._device_entry()
+        dev_reg, ent_reg = MagicMock(), MagicMock()
+
+        # Absent for THRESHOLD-1 consecutive polls → not purged yet.
+        for _ in range(STALE_DEVICE_THRESHOLD - 1):
+            await self._run(coord, {"still_here"}, device_entry=device_entry, dev_reg=dev_reg, ent_reg=ent_reg)
+        dev_reg.async_remove_device.assert_not_called()
+
+        # The THRESHOLD-th consecutive absence triggers the purge.
+        await self._run(coord, {"still_here"}, device_entry=device_entry, dev_reg=dev_reg, ent_reg=ent_reg)
+        dev_reg.async_remove_device.assert_called_once_with("dev_reg_1")
+
+    async def test_cleanup_resets_strikes_when_device_returns(self, hass: HomeAssistant, mock_api: AsyncMock):
+        """A device that reappears clears its strike count and is not purged."""
+        coord = self._coord(hass, mock_api)
+        device_entry = self._device_entry()
+        dev_reg, ent_reg = MagicMock(), MagicMock()
+
+        for _ in range(STALE_DEVICE_THRESHOLD - 1):
+            await self._run(coord, {"still_here"}, device_entry=device_entry, dev_reg=dev_reg, ent_reg=ent_reg)
+        # Device is present again → strike count resets.
+        await self._run(coord, {"serial_gone"}, device_entry=device_entry, dev_reg=dev_reg, ent_reg=ent_reg)
+        # A fresh absence is only the first strike again → still not purged.
+        await self._run(coord, {"still_here"}, device_entry=device_entry, dev_reg=dev_reg, ent_reg=ent_reg)
+
+        dev_reg.async_remove_device.assert_not_called()
+
+    async def test_cleanup_swallows_registry_keyerror(self, hass: HomeAssistant, mock_api: AsyncMock):
+        """A KeyError from async_remove_device must not propagate / fail the poll (coordinator-4).
+
+        The device registry's async_remove_device raises a bare KeyError when a
+        device was removed concurrently; the best-effort cleanup must absorb it.
+        """
+        coord = self._coord(hass, mock_api)
+        device_entry = self._device_entry()
+        dev_reg, ent_reg = MagicMock(), MagicMock()
+        dev_reg.async_remove_device.side_effect = KeyError("already removed")
+        # Pre-age the device to the brink so a single poll triggers the removal.
+        coord._missing_device_counts["serial_gone"] = STALE_DEVICE_THRESHOLD - 1
+
+        await self._run(coord, {"still_here"}, device_entry=device_entry, dev_reg=dev_reg, ent_reg=ent_reg)
 
         dev_reg.async_remove_device.assert_called_once_with("dev_reg_1")
+
+    async def test_cleanup_prunes_strike_counters_for_unregistered_devices(
+        self, hass: HomeAssistant, mock_api: AsyncMock
+    ):
+        """Strike counters for a device_id absent from the HA device registry are dropped.
+
+        `_offline_poll_counts` and `_missing_device_counts` are keyed by device_id;
+        if a device_id never (or no longer) appears in the HA device registry at
+        all, its stray counters must be pruned rather than accumulating forever.
+        """
+        coord = self._coord(hass, mock_api)
+        device_entry = self._device_entry()
+        dev_reg, ent_reg = MagicMock(), MagicMock()
+
+        coord._offline_poll_counts["GHOST"] = 1
+        coord._missing_device_counts["GHOST"] = 1
+
+        await self._run(coord, current_device_ids=set(), device_entry=device_entry, dev_reg=dev_reg, ent_reg=ent_reg)
+
+        assert "GHOST" not in coord._offline_poll_counts
+        assert "GHOST" not in coord._missing_device_counts
 
 
 class TestParseDM24049704Schedule:
@@ -271,3 +372,460 @@ class TestCalculateAutoSpeed:
     async def test_no_schedule_data_returns_zero(self, coordinator: FluidraDataUpdateCoordinator):
         device = {}
         assert coordinator._calculate_auto_speed_from_schedules(device) == 0
+
+
+class TestSyncDeviceFirmware:
+    """Firmware versions reported by devices are mirrored into the registry."""
+
+    _POOLS = [{"id": "p1", "devices": [{"device_id": "D1", "firmware_version_component": "2.0"}]}]
+
+    def _sync(self, hass: HomeAssistant, mock_api: AsyncMock, pools, registry_entry):
+        coord = FluidraDataUpdateCoordinator(hass, mock_api)
+        dev_reg = MagicMock()
+        dev_reg.async_get_device.return_value = registry_entry
+        with patch(
+            "custom_components.fluidra_pool.coordinator.coordinator.dr.async_get",
+            return_value=dev_reg,
+        ):
+            coord._sync_device_firmware(pools)
+        return dev_reg
+
+    def test_updates_registry_when_firmware_differs(self, hass: HomeAssistant, mock_api: AsyncMock):
+        entry = MagicMock()
+        entry.id = "reg_1"
+        entry.sw_version = "1.0"
+        dev_reg = self._sync(hass, mock_api, self._POOLS, entry)
+        dev_reg.async_update_device.assert_called_once_with("reg_1", sw_version="2.0")
+
+    def test_noop_when_firmware_unchanged(self, hass: HomeAssistant, mock_api: AsyncMock):
+        entry = MagicMock()
+        entry.sw_version = "2.0"
+        dev_reg = self._sync(hass, mock_api, self._POOLS, entry)
+        dev_reg.async_update_device.assert_not_called()
+
+    def test_noop_when_device_not_registered(self, hass: HomeAssistant, mock_api: AsyncMock):
+        dev_reg = self._sync(hass, mock_api, self._POOLS, None)
+        dev_reg.async_update_device.assert_not_called()
+
+    def test_skips_devices_without_firmware_or_id(self, hass: HomeAssistant, mock_api: AsyncMock):
+        pools = [{"id": "p1", "devices": [{"device_id": "D1"}, {"firmware_version_component": "9"}]}]
+        dev_reg = self._sync(hass, mock_api, pools, MagicMock())
+        dev_reg.async_get_device.assert_not_called()
+
+
+class TestUpdateDataOutagePath:
+    """A whole-cycle refresh failure counts towards the connection issue."""
+
+    async def _run_update(self, hass: HomeAssistant, mock_api: AsyncMock, *, refresh_fails: bool):
+        coord = FluidraDataUpdateCoordinator(hass, mock_api)
+        coord._first_update = False
+        mock_api.ensure_valid_token = AsyncMock(return_value=True)
+        mock_api.get_pools = AsyncMock(return_value=[{"id": "p1", "devices": []}])
+        side_effect = FluidraConnectionError("cloud down") if refresh_fails else None
+        with (
+            patch.object(coord, "_refresh_pool", AsyncMock(side_effect=side_effect)),
+            patch.object(coord, "_note_update_failure") as note_failure,
+            patch.object(coord, "_handle_update_success") as note_success,
+            patch.object(coord, "_sync_device_firmware") as sync_fw,
+        ):
+            data = await coord._async_update_data()
+        return data, note_failure, note_success, sync_fw
+
+    async def test_all_pools_failing_counts_as_failure(self, hass: HomeAssistant, mock_api: AsyncMock):
+        data, note_failure, note_success, sync_fw = await self._run_update(hass, mock_api, refresh_fails=True)
+        note_failure.assert_called_once()
+        note_success.assert_not_called()
+        sync_fw.assert_not_called()
+        assert "p1" in data  # graceful degradation: data is still returned
+
+    async def test_successful_cycle_resets_streak_and_syncs_firmware(self, hass: HomeAssistant, mock_api: AsyncMock):
+        data, note_failure, note_success, sync_fw = await self._run_update(hass, mock_api, refresh_fails=False)
+        note_failure.assert_not_called()
+        note_success.assert_called_once()
+        sync_fw.assert_called_once()
+        assert "p1" in data
+
+
+class TestPoolAccessLevel:
+    """The coordinator classifies pool access and warns once on viewer (read-only)."""
+
+    async def _refresh(self, hass: HomeAssistant, mock_api: AsyncMock, pool_details: dict, user_id):
+        coord = FluidraDataUpdateCoordinator(hass, mock_api)
+        mock_api.user_id = user_id
+        mock_api.get_pool_details = AsyncMock(return_value=pool_details)
+        mock_api.poll_water_quality = AsyncMock(return_value=None)
+        mock_api.poll_pool_device_statuses = AsyncMock(return_value=None)
+        pool = {"id": "pool_1", "name": "casa", "devices": []}
+        await coord._refresh_pool(pool, {})
+        return coord, pool
+
+    async def test_viewer_access_flagged_and_warns_once(self, hass: HomeAssistant, mock_api: AsyncMock, caplog):
+        details = {"owner": "someone-else", "contracts": [{"id": "me", "accessLevel": "viewer"}]}
+        coord, pool = await self._refresh(hass, mock_api, details, "me")
+        assert pool["access_level"] == "viewer"
+        assert "pool_1" in coord._read_only_pools_warned
+        assert any("viewer (read-only) access" in r.message for r in caplog.records)
+
+        # A second refresh of the same pool must not warn again.
+        caplog.clear()
+        pool2 = {"id": "pool_1", "name": "casa", "devices": []}
+        await coord._refresh_pool(pool2, {})
+        assert not any("viewer (read-only) access" in r.message for r in caplog.records)
+
+    async def test_owner_access_not_flagged(self, hass: HomeAssistant, mock_api: AsyncMock):
+        details = {"owner": "me", "contracts": [{"id": "me", "accessLevel": "viewer"}]}
+        _, pool = await self._refresh(hass, mock_api, details, "me")
+        assert pool["access_level"] == "owner"
+
+
+class TestOnlineDebounce:
+    """A single offline connectivity report must not flip a device offline (Issue #140).
+
+    The Fluidra heartbeat routinely misreports a healthy device as disconnected
+    for one poll; the coordinator only marks a device offline after
+    OFFLINE_GRACE_POLLS consecutive offline reports, and recovers immediately.
+    """
+
+    def test_single_offline_report_keeps_device_online(self, coordinator: FluidraDataUpdateCoordinator):
+        device = {"device_id": "D1", "online": True}
+        coordinator._apply_online_flag(device, "D1", False)
+        assert device["online"] is True
+        assert coordinator._offline_poll_counts["D1"] == 1
+
+    def test_consecutive_offline_reports_mark_device_offline(self, coordinator: FluidraDataUpdateCoordinator):
+        device = {"device_id": "D1", "online": True}
+        for _ in range(OFFLINE_GRACE_POLLS):
+            coordinator._apply_online_flag(device, "D1", False)
+        assert device["online"] is False
+
+    def test_online_report_recovers_immediately_and_resets_strikes(self, coordinator: FluidraDataUpdateCoordinator):
+        device = {"device_id": "D1", "online": False}
+        coordinator._offline_poll_counts["D1"] = OFFLINE_GRACE_POLLS
+        coordinator._apply_online_flag(device, "D1", True)
+        assert device["online"] is True
+        assert "D1" not in coordinator._offline_poll_counts
+        # A later isolated offline report starts counting from scratch.
+        coordinator._apply_online_flag(device, "D1", False)
+        assert device["online"] is True
+
+    async def test_refresh_pool_applies_debounced_flag(
+        self, coordinator: FluidraDataUpdateCoordinator, mock_api: AsyncMock
+    ):
+        """The connectivity flag flows through _refresh_pool with the debounce applied."""
+        mock_api.get_pool_details = AsyncMock(return_value={})
+        mock_api.poll_water_quality = AsyncMock(return_value=None)
+        mock_api.poll_pool_device_statuses = AsyncMock(return_value={"D1": {"connectivity": {"connected": False}}})
+        device = {"device_id": "D1", "name": "Heat pump", "online": True, "components": {}}
+        pool = {"id": "pool_1", "name": "Pool", "devices": [device]}
+
+        await coordinator._refresh_pool(pool, {})
+        assert device["online"] is True  # first strike tolerated
+
+        await coordinator._refresh_pool(pool, {})
+        assert device["online"] is False  # second consecutive strike is trusted
+
+        mock_api.poll_pool_device_statuses = AsyncMock(return_value={"D1": {"connectivity": {"connected": True}}})
+        await coordinator._refresh_pool(pool, {})
+        assert device["online"] is True  # immediate recovery
+
+
+class TestEmptyComponentFetchDetection:
+    """A device whose component fetch keeps coming back empty must eventually
+    surface as a real failure instead of silently freezing forever.
+
+    Reproduces the incident where a transient DNS failure tripped the API
+    circuit breaker; every per-component request then failed individually
+    inside _fetch_components_parallel (which only debug-logs those, so one bad
+    component can't sink an otherwise-fine poll), component_states came back
+    empty every cycle, and the sensors sat frozen on stale data for 6+ hours
+    with no repair issue, no reauth prompt, and no visible error anywhere —
+    only a manual Home Assistant restart fixed it.
+    """
+
+    def _pool(self, device_id: str = "D1") -> dict:
+        device = {"device_id": device_id, "name": "Chlorinator", "online": True, "components": {}}
+        return {"id": "pool_1", "name": "Pool", "devices": [device]}
+
+    async def test_tolerates_fewer_than_threshold_empty_fetches(
+        self, coordinator: FluidraDataUpdateCoordinator, mock_api: AsyncMock
+    ):
+        """A blip under the threshold must not raise — matches existing partial-failure tolerance."""
+        mock_api.get_pool_details = AsyncMock(return_value={})
+        mock_api.poll_water_quality = AsyncMock(return_value=None)
+        mock_api.poll_pool_device_statuses = AsyncMock(return_value=None)
+        mock_api.get_component_state = AsyncMock(return_value=None)
+        pool = self._pool()
+
+        for _ in range(EMPTY_COMPONENT_FETCH_THRESHOLD - 1):
+            await coordinator._refresh_pool(pool, {})
+
+        assert coordinator._empty_component_fetch_counts["D1"] == EMPTY_COMPONENT_FETCH_THRESHOLD - 1
+
+    async def test_raises_after_threshold_consecutive_empty_fetches(
+        self, coordinator: FluidraDataUpdateCoordinator, mock_api: AsyncMock
+    ):
+        """Hitting the threshold must raise FluidraConnectionError so it reaches _async_update_data."""
+        mock_api.get_pool_details = AsyncMock(return_value={})
+        mock_api.poll_water_quality = AsyncMock(return_value=None)
+        mock_api.poll_pool_device_statuses = AsyncMock(return_value=None)
+        mock_api.get_component_state = AsyncMock(return_value=None)
+        pool = self._pool()
+
+        for _ in range(EMPTY_COMPONENT_FETCH_THRESHOLD - 1):
+            await coordinator._refresh_pool(pool, {})
+
+        with pytest.raises(FluidraConnectionError, match="No component data received"):
+            await coordinator._refresh_pool(pool, {})
+
+    async def test_successful_fetch_resets_the_strike_counter(
+        self, coordinator: FluidraDataUpdateCoordinator, mock_api: AsyncMock
+    ):
+        """A single good poll between blips must reset the streak, not accumulate towards it."""
+        mock_api.get_pool_details = AsyncMock(return_value={})
+        mock_api.poll_water_quality = AsyncMock(return_value=None)
+        mock_api.poll_pool_device_statuses = AsyncMock(return_value=None)
+        mock_api.get_component_state = AsyncMock(return_value=None)
+        pool = self._pool()
+
+        for _ in range(EMPTY_COMPONENT_FETCH_THRESHOLD - 1):
+            await coordinator._refresh_pool(pool, {})
+        assert "D1" in coordinator._empty_component_fetch_counts
+
+        mock_api.get_component_state = AsyncMock(return_value={"reportedValue": 1})
+        await coordinator._refresh_pool(pool, {})
+        assert "D1" not in coordinator._empty_component_fetch_counts
+
+    async def test_end_to_end_surfaces_as_connection_repair_issue(self, hass: HomeAssistant, mock_api: AsyncMock):
+        """The whole path: coordinator._async_update_data must count this towards
+        CONNECTION_ISSUE_THRESHOLD, exactly like a raw network failure would —
+        this is the actual bug fix, not just the low-level counter."""
+        mock_api.ensure_valid_token = AsyncMock(return_value=True)
+        mock_api.get_pools = AsyncMock(
+            return_value=[
+                {
+                    "id": "pool_1",
+                    "name": "Pool",
+                    "devices": [{"device_id": "D1", "name": "Chlorinator", "online": True, "components": {}}],
+                }
+            ]
+        )
+        mock_api.get_pool_details = AsyncMock(return_value={})
+        mock_api.poll_water_quality = AsyncMock(return_value=None)
+        mock_api.poll_pool_device_statuses = AsyncMock(return_value=None)
+        mock_api.get_component_state = AsyncMock(return_value=None)
+        coord = FluidraDataUpdateCoordinator(hass, mock_api)
+
+        await coord._async_update_data()  # first update: minimal, no component fetch yet
+
+        for _ in range(EMPTY_COMPONENT_FETCH_THRESHOLD):
+            await coord._async_update_data()
+
+        assert coord._consecutive_update_failures > 0
+
+    async def test_one_chronically_stuck_device_does_not_block_healthy_ones(
+        self, coordinator: FluidraDataUpdateCoordinator, mock_api: AsyncMock
+    ):
+        """Reproduces the standardTestStrip incident (2026-07-30): a pool can contain
+        a virtual/manual-input pseudo device (e.g. a photo-based test-strip entry)
+        that never answers component polls by design, alongside real hardware that
+        polls fine. That one permanently-stuck device must not raise and revert the
+        whole pool's refresh — the healthy device's fresh data must survive, and no
+        exception should propagate as long as at least one device got real data.
+        """
+        mock_api.get_pool_details = AsyncMock(return_value={})
+        mock_api.poll_water_quality = AsyncMock(return_value=None)
+        mock_api.poll_pool_device_statuses = AsyncMock(return_value=None)
+
+        async def fake_component_state(device_id: str, component_id: int):
+            return None if device_id == "STUCK" else {"reportedValue": 42}
+
+        mock_api.get_component_state = AsyncMock(side_effect=fake_component_state)
+
+        pool = {
+            "id": "pool_1",
+            "name": "Pool",
+            "devices": [
+                {"device_id": "STUCK", "name": "Test Strip", "online": True, "components": {}},
+                {"device_id": "HEALTHY", "name": "Chlorinator", "online": True, "components": {}},
+            ],
+        }
+
+        for _ in range(EMPTY_COMPONENT_FETCH_THRESHOLD + 2):
+            await coordinator._refresh_pool(pool, {})  # must not raise
+
+        assert coordinator._empty_component_fetch_counts["STUCK"] >= EMPTY_COMPONENT_FETCH_THRESHOLD
+        assert "HEALTHY" not in coordinator._empty_component_fetch_counts
+        healthy_device = next(d for d in pool["devices"] if d["device_id"] == "HEALTHY")
+        assert healthy_device["components"]
+
+
+class TestUnverifiedProfileIssue:
+    """Devices resolved on a catch-all/legacy profile raise a repair issue once (Plan 004)."""
+
+    async def _refresh(self, coordinator: FluidraDataUpdateCoordinator, mock_api: AsyncMock, device: dict) -> dict:
+        mock_api.get_pool_details = AsyncMock(return_value={})
+        mock_api.poll_water_quality = AsyncMock(return_value=None)
+        mock_api.poll_pool_device_statuses = AsyncMock(return_value=None)
+        pool = {"id": "pool_1", "name": "Pool", "devices": [device]}
+        await coordinator._refresh_pool(pool, {})
+        return pool
+
+    async def test_unverified_catchall_device_raises_issue(
+        self, coordinator: FluidraDataUpdateCoordinator, mock_api: AsyncMock
+    ):
+        # Bridged device with no serial-specific profile: matches the generic
+        # "*.nn_*" + family catch-all chlorinator profile, not any verified
+        # serial-specific one.
+        device = {
+            "device_id": "ZZ99999999.nn_1",
+            "name": "Chlorinator",
+            "family": "Chlorinator",
+            "type": "chlorinator",
+            "components": {},
+        }
+        # Sanity check the fixture actually exercises the unverified path before
+        # asserting on the issue — a scoring/pattern change must be reported,
+        # not silently worked around.
+        resolved = DeviceIdentifier.identify_device(device)
+        assert resolved is not None
+        assert resolved.verified is False
+
+        with patch(
+            "custom_components.fluidra_pool.coordinator.coordinator.async_create_unverified_profile_issue"
+        ) as create:
+            await self._refresh(coordinator, mock_api, device)
+            create.assert_called_once_with(coordinator.hass, "ZZ99999999.nn_1", "Chlorinator")
+
+        assert coordinator._unverified_profile_flagged == {"ZZ99999999.nn_1"}
+
+    async def test_second_refresh_does_not_duplicate_issue(
+        self, coordinator: FluidraDataUpdateCoordinator, mock_api: AsyncMock
+    ):
+        device = {
+            "device_id": "ZZ99999999.nn_1",
+            "name": "Chlorinator",
+            "family": "Chlorinator",
+            "type": "chlorinator",
+            "components": {},
+        }
+        with patch(
+            "custom_components.fluidra_pool.coordinator.coordinator.async_create_unverified_profile_issue"
+        ) as create:
+            await self._refresh(coordinator, mock_api, device)
+            await self._refresh(coordinator, mock_api, device)
+            create.assert_called_once()
+
+        assert len(coordinator._unverified_profile_flagged) == 1
+
+    async def test_verified_profile_device_does_not_raise_issue(
+        self, coordinator: FluidraDataUpdateCoordinator, mock_api: AsyncMock
+    ):
+        # Serial-specific profile (cc25052635_chlorinator) — verified by default.
+        device = {
+            "device_id": "CC25052635xyz",
+            "name": "Chlorinator",
+            "family": "Chlorinator",
+            "type": "chlorinator",
+            "components": {},
+        }
+        resolved = DeviceIdentifier.identify_device(device)
+        assert resolved is not None
+        assert resolved.verified is True
+
+        with patch(
+            "custom_components.fluidra_pool.coordinator.coordinator.async_create_unverified_profile_issue"
+        ) as create:
+            await self._refresh(coordinator, mock_api, device)
+            create.assert_not_called()
+
+        assert coordinator._unverified_profile_flagged == set()
+
+    async def test_profile_becoming_verified_clears_the_issue(
+        self, coordinator: FluidraDataUpdateCoordinator, mock_api: AsyncMock
+    ):
+        """If a code update adds a verified profile, the stale issue is cleared."""
+        device = {
+            "device_id": "ZZ99999999.nn_1",
+            "name": "Chlorinator",
+            "family": "Chlorinator",
+            "type": "chlorinator",
+            "components": {},
+        }
+        with patch("custom_components.fluidra_pool.coordinator.coordinator.async_create_unverified_profile_issue"):
+            await self._refresh(coordinator, mock_api, device)
+        assert "ZZ99999999.nn_1" in coordinator._unverified_profile_flagged
+
+        # Simulate a later release shipping a verified serial-specific profile
+        # for this same device_id by stubbing identify_device's result — the
+        # coordinator's own scan/scoring logic is not touched.
+        verified_config = DeviceIdentifier.identify_device({"device_id": "CC25052635xyz"})
+        assert verified_config is not None
+        assert verified_config.verified is True
+        with (
+            patch(
+                "custom_components.fluidra_pool.coordinator.coordinator.DeviceIdentifier.identify_device",
+                return_value=verified_config,
+            ),
+            patch(
+                "custom_components.fluidra_pool.coordinator.coordinator.async_delete_unverified_profile_issue"
+            ) as delete,
+        ):
+            await self._refresh(coordinator, mock_api, device)
+            delete.assert_called_once_with(coordinator.hass, "ZZ99999999.nn_1")
+
+        assert coordinator._unverified_profile_flagged == set()
+
+
+class TestAlarmPreservation:
+    """A failed or partial device-status poll must not silently clear an active
+    alarm (CodeRabbit finding on PR #170, mirrors how `components` was already
+    preserved from `prev_devices_by_id` -- `alarms` had the same gap)."""
+
+    async def test_failed_status_poll_preserves_previous_alarms(
+        self, coordinator: FluidraDataUpdateCoordinator, mock_api: AsyncMock
+    ):
+        """poll_pool_device_statuses raising must not wipe an active alarm."""
+        mock_api.get_pool_details = AsyncMock(return_value={})
+        mock_api.poll_water_quality = AsyncMock(return_value=None)
+        mock_api.poll_pool_device_statuses = AsyncMock(side_effect=FluidraConnectionError("cloud down"))
+        device = {"device_id": "D1", "name": "Chlorinator", "online": True, "components": {}}
+        pool = {"id": "pool_1", "name": "Pool", "devices": [device]}
+        prev_device = {"device_id": "D1", "alarms": [{"error_code": 42, "title": "PUMPSTOP PH"}]}
+        previous_data = {"pool_1": {"devices": [prev_device]}}
+
+        await coordinator._refresh_pool(pool, previous_data)
+
+        assert device["alarms"] == [{"error_code": 42, "title": "PUMPSTOP PH"}]
+
+    async def test_status_missing_for_device_preserves_previous_alarms(
+        self, coordinator: FluidraDataUpdateCoordinator, mock_api: AsyncMock
+    ):
+        """A response that omits this device's entry must not read as 'no alarms'."""
+        mock_api.get_pool_details = AsyncMock(return_value={})
+        mock_api.poll_water_quality = AsyncMock(return_value=None)
+        # Statuses come back, but with no entry at all for D1 this cycle.
+        mock_api.poll_pool_device_statuses = AsyncMock(return_value={})
+        device = {"device_id": "D1", "name": "Chlorinator", "online": True, "components": {}}
+        pool = {"id": "pool_1", "name": "Pool", "devices": [device]}
+        prev_device = {"device_id": "D1", "alarms": [{"error_code": 42, "title": "PUMPSTOP PH"}]}
+        previous_data = {"pool_1": {"devices": [prev_device]}}
+
+        await coordinator._refresh_pool(pool, previous_data)
+
+        assert device["alarms"] == [{"error_code": 42, "title": "PUMPSTOP PH"}]
+
+    async def test_successful_status_poll_still_overwrites_alarms(
+        self, coordinator: FluidraDataUpdateCoordinator, mock_api: AsyncMock
+    ):
+        """A successful poll must still replace stale alarms with fresh data (including clearing them)."""
+        mock_api.get_pool_details = AsyncMock(return_value={})
+        mock_api.poll_water_quality = AsyncMock(return_value=None)
+        mock_api.poll_pool_device_statuses = AsyncMock(return_value={"D1": {"alarms": []}})
+        device = {"device_id": "D1", "name": "Chlorinator", "online": True, "components": {}}
+        pool = {"id": "pool_1", "name": "Pool", "devices": [device]}
+        prev_device = {"device_id": "D1", "alarms": [{"error_code": 42, "title": "PUMPSTOP PH"}]}
+        previous_data = {"pool_1": {"devices": [prev_device]}}
+
+        await coordinator._refresh_pool(pool, previous_data)
+
+        assert device["alarms"] == []

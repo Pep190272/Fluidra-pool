@@ -2,20 +2,31 @@
 
 from __future__ import annotations
 
-from datetime import datetime, time
+from datetime import time, timedelta
 import logging
 from typing import TYPE_CHECKING, Any
 
 import aiohttp
 from homeassistant.components.sensor import SensorDeviceClass, SensorStateClass
-from homeassistant.const import PERCENTAGE, UnitOfTemperature
+from homeassistant.const import (
+    PERCENTAGE,
+    UnitOfLength,
+    UnitOfPower,
+    UnitOfTemperature,
+    UnitOfTime,
+    UnitOfVolumeFlowRate,
+)
+from homeassistant.util import dt as dt_util
 
 from ..api_resilience import FluidraError
 from ..const import LUMIPLUS_COMPONENT_BRIGHTNESS
+from ..device_registry import DeviceIdentifier
+from ..helpers import parse_cron_time
 from .base import FluidraPoolSensorEntity
 
 if TYPE_CHECKING:
     from ..coordinator import FluidraDataUpdateCoordinator
+    from ..fluidra_api import FluidraPoolAPI
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -23,7 +34,14 @@ _LOGGER = logging.getLogger(__name__)
 class FluidraTemperatureSensor(FluidraPoolSensorEntity):
     """Temperature sensor for pool heaters and heat pumps."""
 
-    def __init__(self, coordinator, api, pool_id: str, device_id: str, sensor_type: str):
+    def __init__(
+        self,
+        coordinator: FluidraDataUpdateCoordinator,
+        api: FluidraPoolAPI,
+        pool_id: str,
+        device_id: str,
+        sensor_type: str,
+    ) -> None:
         """Initialize temperature sensor."""
         super().__init__(coordinator, api, pool_id, device_id, sensor_type)
         self._attr_device_class = SensorDeviceClass.TEMPERATURE
@@ -93,21 +111,115 @@ class FluidraLightBrightnessSensor(FluidraPoolSensorEntity):
 
 
 class FluidraRunningHoursSensor(FluidraPoolSensorEntity):
-    """Running hours sensor for Z260iQ heat pumps (component 0)."""
+    """Running hours sensor for heat pumps (Z260iQ component 0 / Z550iQ+ component 60)."""
 
     _attr_translation_key = "running_hours"
+    _attr_device_class = SensorDeviceClass.DURATION
     _attr_state_class = SensorStateClass.TOTAL_INCREASING
-    _attr_native_unit_of_measurement = "h"
+    _attr_native_unit_of_measurement = UnitOfTime.HOURS
     _attr_icon = "mdi:clock-outline"
 
-    def __init__(self, coordinator, api, pool_id: str, device_id: str):
+    def __init__(
+        self,
+        coordinator: FluidraDataUpdateCoordinator,
+        api: FluidraPoolAPI,
+        pool_id: str,
+        device_id: str,
+    ) -> None:
         """Initialize running hours sensor."""
         super().__init__(coordinator, api, pool_id, device_id, "running_hours")
 
     @property
     def native_value(self) -> int | None:
-        """Return the running hours from component 0."""
+        """Return the running hours (populated by the coordinator from the model's component)."""
         return self.device_data.get("running_hours")
+
+
+class FluidraCompressorHoursSensor(FluidraPoolSensorEntity):
+    """Compressor running hours for Z650iQ (component 39)."""
+
+    _attr_translation_key = "compressor_running_hours"
+    _attr_device_class = SensorDeviceClass.DURATION
+    _attr_state_class = SensorStateClass.TOTAL_INCREASING
+    _attr_native_unit_of_measurement = UnitOfTime.HOURS
+    _attr_icon = "mdi:clock-outline"
+
+    def __init__(
+        self,
+        coordinator: FluidraDataUpdateCoordinator,
+        api: FluidraPoolAPI,
+        pool_id: str,
+        device_id: str,
+    ) -> None:
+        """Initialize compressor running hours sensor."""
+        super().__init__(coordinator, api, pool_id, device_id, "compressor_hours")
+
+    @property
+    def native_value(self) -> int | None:
+        """Return the compressor running hours."""
+        return self.device_data.get("compressor_running_hours")
+
+
+class FluidraCompressorModulationSensor(FluidraPoolSensorEntity):
+    """Compressor modulation level for the Z650iQ (component 32), in percent.
+
+    Reads 0 while the compressor is off and rises with the power draw
+    otherwise, at a consistent ~13 W per unit whether the compressor is
+    idling near 30 or driven to 92-93 under a Boost/max-load test — a range
+    that fits a 0-100 percent scale rather than an arbitrary Hz figure.
+    """
+
+    _attr_translation_key = "compressor_modulation"
+    _attr_state_class = SensorStateClass.MEASUREMENT
+    _attr_native_unit_of_measurement = PERCENTAGE
+    _attr_icon = "mdi:gauge"
+
+    def __init__(
+        self,
+        coordinator: FluidraDataUpdateCoordinator,
+        api: FluidraPoolAPI,
+        pool_id: str,
+        device_id: str,
+    ) -> None:
+        """Initialize the compressor modulation sensor."""
+        super().__init__(coordinator, api, pool_id, device_id, "compressor_modulation")
+
+    @property
+    def native_value(self) -> int | None:
+        """Return the raw modulation level."""
+        value: int | None = self.device_data.get("compressor_modulation")
+        return value
+
+
+class FluidraWifiSignalSensor(FluidraPoolSensorEntity):
+    """WiFi signal strength sensor (RSSI in dBm)."""
+
+    _attr_translation_key = "wifi_signal"
+    _attr_device_class = SensorDeviceClass.SIGNAL_STRENGTH
+    _attr_state_class = SensorStateClass.MEASUREMENT
+    _attr_native_unit_of_measurement = "dBm"
+    _attr_entity_category = None  # visible by default, not diagnostic-only
+
+    def __init__(
+        self,
+        coordinator: FluidraDataUpdateCoordinator,
+        api: FluidraPoolAPI,
+        pool_id: str,
+        device_id: str,
+    ) -> None:
+        """Initialize WiFi signal sensor."""
+        super().__init__(coordinator, api, pool_id, device_id, "wifi_signal")
+
+    @property
+    def native_value(self) -> float | None:
+        """Return the WiFi RSSI in dBm."""
+        raw = self.device_data.get("signal_strength_component")
+        if raw is None:
+            return None
+        try:
+            return float(raw)
+        except (ValueError, TypeError):
+            return None
 
 
 class FluidraPumpSpeedSensor(FluidraPoolSensorEntity):
@@ -115,12 +227,12 @@ class FluidraPumpSpeedSensor(FluidraPoolSensorEntity):
 
     _attr_translation_key = "speed_mode"
     _attr_device_class = SensorDeviceClass.ENUM
-    _attr_options = ["stopped", "not_running", "low", "medium", "high"]
+    _attr_options = ["stopped", "not_running", "running", "low", "medium", "high"]
 
     def __init__(
         self,
         coordinator: FluidraDataUpdateCoordinator,
-        api,
+        api: FluidraPoolAPI,
         pool_id: str,
         device_id: str,
     ) -> None:
@@ -148,6 +260,13 @@ class FluidraPumpSpeedSensor(FluidraPoolSensorEntity):
         current_speed = self.device_data.get("speed_percent", 0)
 
         if current_speed == 0:
+            # Victoria VS pumps don't publish the live output % while running under a
+            # schedule or in FLOW mode (c21/c17 zero out), even though the pump is
+            # turning — c25 flow / c22 power / c24 head stay live and prove it. So a
+            # running pump would misleadingly read "not_running": report "running"
+            # instead, rather than inventing a low/medium/high from a 0 % (Issue #144).
+            if DeviceIdentifier.has_feature(self.device_data, "victoria_vs_mode"):
+                return "running"
             return "not_running"
 
         if current_speed <= 50:
@@ -162,7 +281,7 @@ class FluidraPumpSpeedSensor(FluidraPoolSensorEntity):
         return self._get_speed_mode()
 
     @property
-    def extra_state_attributes(self) -> dict:
+    def extra_state_attributes(self) -> dict[str, Any]:
         """Return additional state attributes."""
         is_running = self.device_data.get("is_running", False)
         pump_reported = self.device_data.get("pump_reported")
@@ -177,7 +296,7 @@ class FluidraPumpSpeedSensor(FluidraPoolSensorEntity):
         current_speed = self.device_data.get("speed_percent", 0)
         speed_level = self.device_data.get("speed_level_reported")
 
-        return {
+        attrs: dict[str, Any] = {
             "pump_running": is_running,
             "auto_mode": auto_mode,
             "speed_percent": current_speed,
@@ -191,6 +310,267 @@ class FluidraPumpSpeedSensor(FluidraPoolSensorEntity):
             },
         }
 
+        # Victoria VS pumps also report their mode and setpoint (Issue #144):
+        # the target is either a speed % or a flow rate in m³/h depending on
+        # setpoint_type ("SPEED" vs "FLOW").
+        if "pump_setpoint_type" in self.device_data or "pump_mode" in self.device_data:
+            attrs["pump_mode"] = self.device_data.get("pump_mode")
+            attrs["setpoint_type"] = self.device_data.get("pump_setpoint_type")
+            attrs["setpoint"] = self.device_data.get("pump_setpoint")
+
+        return attrs
+
+
+class FluidraPumpPowerSensor(FluidraPoolSensorEntity):
+    """Electrical power reported by VS pumps that expose it (Victoria c22).
+
+    Cross-checked against the pump's local HMI in Issue #144: exact at high
+    speed (719 vs 720 W at 95 %), within a few tens of watts below — the pump
+    reports factory performance-curve data rather than a metered value.
+    """
+
+    _attr_translation_key = "pump_power"
+    _attr_device_class = SensorDeviceClass.POWER
+    _attr_state_class = SensorStateClass.MEASUREMENT
+    _attr_native_unit_of_measurement = UnitOfPower.WATT
+
+    def __init__(
+        self,
+        coordinator: FluidraDataUpdateCoordinator,
+        api: FluidraPoolAPI,
+        pool_id: str,
+        device_id: str,
+    ) -> None:
+        """Initialize the pump power sensor."""
+        super().__init__(coordinator, api, pool_id, device_id, "power")
+
+    @property
+    def native_value(self) -> int | None:
+        """Return the reported pump power in watts."""
+        return self.device_data.get("pump_power")
+
+
+class FluidraPumpHeadSensor(FluidraPoolSensorEntity):
+    """Hydraulic head reported by VS pumps that expose it (Victoria c24, cm → m)."""
+
+    _attr_translation_key = "pump_head"
+    _attr_state_class = SensorStateClass.MEASUREMENT
+    _attr_native_unit_of_measurement = UnitOfLength.METERS
+    _attr_suggested_display_precision = 1
+    _attr_icon = "mdi:waves-arrow-up"
+
+    def __init__(
+        self,
+        coordinator: FluidraDataUpdateCoordinator,
+        api: FluidraPoolAPI,
+        pool_id: str,
+        device_id: str,
+    ) -> None:
+        """Initialize the pump head sensor."""
+        super().__init__(coordinator, api, pool_id, device_id, "head")
+
+    @property
+    def native_value(self) -> float | None:
+        """Return the reported hydraulic head in metres."""
+        return self.device_data.get("pump_head")
+
+
+class FluidraPumpFlowSensor(FluidraPoolSensorEntity):
+    """Water flow rate reported by VS pumps that expose it (Victoria c25, m³/h)."""
+
+    _attr_translation_key = "pump_flow"
+    _attr_device_class = SensorDeviceClass.VOLUME_FLOW_RATE
+    _attr_state_class = SensorStateClass.MEASUREMENT
+    _attr_native_unit_of_measurement = UnitOfVolumeFlowRate.CUBIC_METERS_PER_HOUR
+    _attr_suggested_display_precision = 1
+    _attr_icon = "mdi:pump"
+
+    def __init__(
+        self,
+        coordinator: FluidraDataUpdateCoordinator,
+        api: FluidraPoolAPI,
+        pool_id: str,
+        device_id: str,
+    ) -> None:
+        """Initialize the pump flow sensor."""
+        super().__init__(coordinator, api, pool_id, device_id, "flow")
+
+    @property
+    def native_value(self) -> float | None:
+        """Return the reported flow rate in m³/h."""
+        return self.device_data.get("pump_flow")
+
+
+class FluidraPumpActivitySensor(FluidraPoolSensorEntity):
+    """What a VS pump is doing right now, including transient phases (Issue #144).
+
+    The Victoria cycles through PRIMING → CALIBRATION before settling into its run,
+    and reports that on c14 (motor status) / c16 (operating mode). Those phases used
+    to leak into the speed reading; here they get their own state so the speed sensor
+    can stay a speed. Mapped from the pump's own strings, with the transient phases
+    taking precedence over the steady-state mode.
+    """
+
+    _attr_translation_key = "pump_activity"
+    _attr_device_class = SensorDeviceClass.ENUM
+    _attr_options = ["stopped", "priming", "calibrating", "scheduled", "manual", "running", "unknown"]
+    _attr_icon = "mdi:pump"
+
+    def __init__(
+        self,
+        coordinator: FluidraDataUpdateCoordinator,
+        api: FluidraPoolAPI,
+        pool_id: str,
+        device_id: str,
+    ) -> None:
+        """Initialize the pump activity sensor."""
+        super().__init__(coordinator, api, pool_id, device_id, "activity")
+
+    @property
+    def native_value(self) -> str | None:
+        """Return the current activity phase."""
+        device = self.device_data
+        status = str(device.get("component_14_data", {}).get("reportedValue") or "").strip().upper()
+        mode = str(device.get("pump_mode") or "").strip().upper()
+
+        # Nothing reported yet (first poll): unknown rather than a misleading
+        # "stopped" — we genuinely don't know what the pump is doing.
+        if not status and not mode:
+            return None
+
+        # Transient phases first — they describe what the pump is busy doing.
+        if "PRIMING" in status or "PRIMING" in mode:
+            return "priming"
+        if "CALIBRATION" in status or "CALIBRATION" in mode:
+            return "calibrating"
+
+        if not device.get("is_running", False):
+            return "stopped"
+        if mode == "AUTO":
+            return "scheduled"
+        if "QUICK" in mode:
+            return "manual"
+        return "running"
+
+    def _active_scheduler(self) -> dict[str, Any] | None:
+        """Find the scheduler entry currently driving the pump, if any.
+
+        Matched on c19 (the active entry's id) first, since that's the join key the
+        app itself uses; otherwise on the ``running`` flag the backend flips on the
+        entry's actions. Returns None when idle or when the pool's schedulers
+        haven't been fetched (Issue #144).
+        """
+        schedulers = self.pool_data.get("schedulers")
+        if not isinstance(schedulers, list):
+            return None
+
+        active_id = self.device_data.get("pump_active_schedule_id")
+        if active_id:
+            for entry in schedulers:
+                if isinstance(entry, dict) and str(entry.get("id")) == str(active_id):
+                    return entry
+
+        for entry in schedulers:
+            if not isinstance(entry, dict):
+                continue
+            actions = entry.get("actions")
+            if isinstance(actions, list) and any(
+                isinstance(action, dict) and action.get("running") for action in actions
+            ):
+                return entry
+        return None
+
+    @staticmethod
+    def _scheduler_target(entry: dict[str, Any]) -> tuple[str | None, Any]:
+        """Return the (mode, value) a scheduler entry commands.
+
+        ``deviceActions[].id`` is 0 for a speed percentage and 1 for a flow rate in
+        m³/h, with the value in ``arguments`` (Issue #144).
+        """
+        actions = entry.get("actions")
+        if not isinstance(actions, list):
+            return (None, None)
+        for action in actions:
+            if not isinstance(action, dict):
+                continue
+            for device_action in action.get("deviceActions", []) or []:
+                if not isinstance(device_action, dict):
+                    continue
+                arguments = device_action.get("arguments")
+                if not isinstance(arguments, list) or not arguments:
+                    continue
+                action_id = device_action.get("id")
+                mode = {0: "SPEED", 1: "FLOW"}.get(action_id) if isinstance(action_id, int) else None
+                if mode:
+                    return (mode, arguments[0])
+        return (None, None)
+
+    @staticmethod
+    def _schedule_remaining_seconds(entry: dict[str, Any]) -> int | None:
+        """Seconds left in the running schedule, computed client-side.
+
+        The device publishes no end time for a schedule, so this mirrors what the
+        app does: take the entry's cron ``startTime`` plus its ``duration``
+        (minutes). Overnight windows are handled by walking the start back a day
+        when the computed end already passed. Returns None when the entry lacks
+        usable timing or the result isn't plausible (Issue #144).
+        """
+        start = parse_cron_time(str(entry.get("startTime", "")))
+        duration = entry.get("duration")
+        if start is None or not isinstance(duration, (int, float)) or duration <= 0:
+            return None
+
+        now = dt_util.now()
+        start_dt = now.replace(hour=start.hour, minute=start.minute, second=0, microsecond=0)
+        end_dt = start_dt + timedelta(minutes=float(duration))
+        if end_dt <= now:
+            # The window likely began yesterday (overnight schedule).
+            end_dt -= timedelta(days=1)
+            if end_dt <= now:
+                return None
+
+        remaining = int((end_dt - now).total_seconds())
+        # Guard against a mismatched entry: never report more than the window itself.
+        return remaining if 0 < remaining <= duration * 60 else None
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        """Expose the raw pump strings plus the active quick-function, when any."""
+        device = self.device_data
+        attrs: dict[str, Any] = {
+            "motor_status": device.get("component_14_data", {}).get("reportedValue"),
+            "operating_mode": device.get("pump_mode"),
+        }
+
+        # A schedule-driven run: the target exists only in the pool's /schedulers
+        # config, so surface the matched entry's name and target (Issue #144).
+        scheduler = self._active_scheduler()
+        if scheduler is not None:
+            attrs["schedule_name"] = scheduler.get("name")
+            mode, value = self._scheduler_target(scheduler)
+            if mode:
+                attrs["schedule_mode"] = mode
+                attrs["schedule_setpoint"] = value
+            remaining = self._schedule_remaining_seconds(scheduler)
+            if remaining is not None:
+                attrs["schedule_remaining_seconds"] = remaining
+
+        # c135 only reflects quick functions/presets — it goes stale during a
+        # schedule-driven run, so only surface it while actually in QUICK FUNCTION
+        # (Issue #144). Schedule runs get their name from /schedulers later.
+        quick = device.get("pump_quick_function")
+        if isinstance(quick, dict) and "QUICK" in str(device.get("pump_mode") or "").upper():
+            attrs["quick_function"] = quick.get("name")
+            attrs["quick_function_mode"] = quick.get("mode")
+            attrs["quick_function_setpoint"] = quick.get("setpoint")
+            expiry = device.get("pump_quick_function_expiry")
+            if expiry:
+                attrs["quick_function_ends_at"] = dt_util.utc_from_timestamp(expiry).isoformat()
+                remaining = int(expiry - dt_util.utcnow().timestamp())
+                attrs["quick_function_remaining_seconds"] = max(0, remaining)
+
+        return attrs
+
 
 class FluidraPumpScheduleSensor(FluidraPoolSensorEntity):
     """Sensor for displaying pump weekly schedules."""
@@ -198,7 +578,7 @@ class FluidraPumpScheduleSensor(FluidraPoolSensorEntity):
     def __init__(
         self,
         coordinator: FluidraDataUpdateCoordinator,
-        api,
+        api: FluidraPoolAPI,
         pool_id: str,
         device_id: str,
     ) -> None:
@@ -213,17 +593,9 @@ class FluidraPumpScheduleSensor(FluidraPoolSensorEntity):
 
     def _parse_cron_time(self, cron_time: str) -> time | None:
         """Parse cron time format 'mm HH * * 0,1,2,3,4,5,6' to time object."""
-        try:
-            parts = cron_time.split()
-            if len(parts) >= 2:
-                minute = int(parts[0])
-                hour = int(parts[1])
-                return time(hour, minute)
-        except (ValueError, TypeError):
-            pass
-        return None
+        return parse_cron_time(cron_time)
 
-    def _format_schedule_time(self, schedule: dict) -> str:
+    def _format_schedule_time(self, schedule: dict[str, Any]) -> str:
         """Format schedule time range for display."""
         start_time = self._parse_cron_time(schedule.get("startTime", ""))
         end_time = self._parse_cron_time(schedule.get("endTime", ""))
@@ -237,9 +609,9 @@ class FluidraPumpScheduleSensor(FluidraPoolSensorEntity):
         speed_map = {"0": "low (45%)", "1": "medium (65%)", "2": "high (100%)"}
         return speed_map.get(operation, "low (45%)")
 
-    def _get_current_schedule(self, schedules: list[dict]) -> dict | None:
+    def _get_current_schedule(self, schedules: list[dict[str, Any]]) -> dict[str, Any] | None:
         """Get currently active schedule based on current time."""
-        now = datetime.now().time()
+        now = dt_util.now().time()
 
         for schedule in schedules:
             if not schedule.get("enabled", False):
@@ -252,12 +624,13 @@ class FluidraPumpScheduleSensor(FluidraPoolSensorEntity):
                 return schedule
         return None
 
-    def _get_schedules_data(self) -> list[dict]:
+    def _get_schedules_data(self) -> list[dict[str, Any]]:
         """Get schedules data from device data."""
         device_data = self.device_data
 
         if "schedule_data" in device_data:
-            return device_data["schedule_data"]
+            schedule_data: list[dict[str, Any]] = device_data["schedule_data"]
+            return schedule_data
         return []
 
     @property
@@ -320,7 +693,7 @@ class FluidraDeviceInfoSensor(FluidraPoolSensorEntity):
     def __init__(
         self,
         coordinator: FluidraDataUpdateCoordinator,
-        api,
+        api: FluidraPoolAPI,
         pool_id: str,
         device_id: str,
     ) -> None:
@@ -359,6 +732,8 @@ class FluidraDeviceInfoSensor(FluidraPoolSensorEntity):
             info_data["firmware_version"] = device_data["firmware_version_component"]
         if "hardware_errors_component" in device_data:
             info_data["hardware_errors"] = device_data["hardware_errors_component"]
+        if "secondary_firmware_component" in device_data:
+            info_data["secondary_firmware"] = device_data["secondary_firmware_component"]
         if "comm_errors_component" in device_data:
             info_data["comm_errors"] = device_data["comm_errors_component"]
         if "timezone_component" in device_data:

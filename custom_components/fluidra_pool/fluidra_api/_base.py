@@ -34,8 +34,9 @@ class FluidraAPIBase:
         _session_lock: asyncio.Lock
         access_token: str | None
         refresh_token: str | None
-        id_token: str | None
         token_expires_at: int | None
+        _last_token_store: float
+        user_id: str | None
         _on_token_persist: Callable[[str], None] | None
         user_pools: list[dict[str, Any]]
         devices: list[dict[str, Any]]

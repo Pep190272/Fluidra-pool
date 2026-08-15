@@ -10,7 +10,7 @@ import logging
 from typing import TYPE_CHECKING, Any, Final
 
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.const import Platform
+from homeassistant.const import CONF_EMAIL, CONF_PASSWORD, Platform
 from homeassistant.core import HomeAssistant, ServiceCall, ServiceResponse, SupportsResponse
 from homeassistant.exceptions import (
     ConfigEntryAuthFailed,
@@ -25,12 +25,14 @@ import voluptuous as vol
 from .api_resilience import FluidraError, FluidraMFARequired
 from .const import (
     COMPONENT_SCHEDULE,
-    CONF_EMAIL,
-    CONF_PASSWORD,
+    CONF_REFRESH_TOKEN,
+    DEVICE_MODEL_FALLBACK,
+    DEVICE_MODEL_MAP,
     DOMAIN,
     FluidraPoolConfigEntry,
     FluidraPoolRuntimeData,
 )
+from .helpers import resolve_schedule_component
 from .utils import mask_email
 
 if TYPE_CHECKING:
@@ -38,9 +40,14 @@ if TYPE_CHECKING:
 
 _LOGGER = logging.getLogger(__name__)
 
+# Configured only via config entries (UI) and services — no YAML schema.
+CONFIG_SCHEMA = cv.config_entry_only_config_schema(DOMAIN)
+
 PLATFORMS: Final = [
     Platform.SWITCH,
     Platform.SENSOR,
+    Platform.BINARY_SENSOR,  # Pour l'état de production de la cellule de chloration
+    Platform.BUTTON,  # Pour l'arrêt (Stop) de la pompe Victoria VS
     Platform.SELECT,  # Pour modes d'opération pompe (OFF/ON/AUTO/TURBO)
     Platform.NUMBER,  # Pour contrôle vitesse pompe E30iQ (0-100%)
     Platform.TIME,  # Pour édition des heures de programmation
@@ -102,13 +109,13 @@ async def async_setup_entry(hass: HomeAssistant, entry: FluidraPoolConfigEntry) 
     from .fluidra_api import FluidraPoolAPI
 
     # Pass any stored refresh token so the API can bypass MFA on reload/restart.
-    stored_refresh_token = entry.data.get("refresh_token")
+    stored_refresh_token = entry.data.get(CONF_REFRESH_TOKEN)
 
     def _persist_refresh_token(new_token: str) -> None:
         """Persist the latest refresh token back into the config entry."""
-        if entry.data.get("refresh_token") == new_token:
+        if entry.data.get(CONF_REFRESH_TOKEN) == new_token:
             return  # No-op write would needlessly touch the entry.
-        hass.config_entries.async_update_entry(entry, data={**entry.data, "refresh_token": new_token})
+        hass.config_entries.async_update_entry(entry, data={**entry.data, CONF_REFRESH_TOKEN: new_token})
 
     api = FluidraPoolAPI(
         email,
@@ -175,13 +182,6 @@ async def async_setup_entry(hass: HomeAssistant, entry: FluidraPoolConfigEntry) 
     # Update device registry with correct names/models from coordinator data
     from .device_registry import DeviceIdentifier
 
-    model_map = {
-        "chlorinator": "Chlorinator",
-        "pump": "Pump",
-        "heat_pump": "Heat Pump",
-        "light": "Light",
-        "heater": "Heater",
-    }
     if coordinator.data:
         for pool_id, pool_data in coordinator.data.items():
             for device in pool_data.get("devices", []):
@@ -190,7 +190,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: FluidraPoolConfigEntry) 
                     continue
                 config = DeviceIdentifier.identify_device(device)
                 if config:
-                    model = model_map.get(config.device_type, "Pool Equipment")
+                    model = DEVICE_MODEL_MAP.get(config.device_type, DEVICE_MODEL_FALLBACK)
                     device_name = device.get("name", f"Device {device_id}")
                     device_registry.async_get_or_create(
                         config_entry_id=entry.entry_id,
@@ -272,7 +272,8 @@ def _get_device_data(coordinator: FluidraDataUpdateCoordinator, device_id: str) 
         return None
 
     for pool_data in coordinator.data.values():
-        for device in pool_data.get("devices", []):
+        devices: list[dict[str, Any]] = pool_data.get("devices", [])
+        for device in devices:
             if device.get("device_id") == device_id:
                 return device
     return None
@@ -285,12 +286,10 @@ def _coordinator_has_device(coordinator: FluidraDataUpdateCoordinator, device_id
 
 def _get_schedule_component(coordinator: FluidraDataUpdateCoordinator, device_id: str) -> int:
     """Return the schedule component for a device, defaulting to pump schedules."""
-    from .device_registry import DeviceIdentifier
-
     device = _get_device_data(coordinator, device_id)
     if device is None:
         return COMPONENT_SCHEDULE
-    return DeviceIdentifier.get_feature(device, "schedule_component", COMPONENT_SCHEDULE)
+    return resolve_schedule_component(device, COMPONENT_SCHEDULE)
 
 
 def _get_coordinator_for_device(hass: HomeAssistant, device_id: str) -> FluidraDataUpdateCoordinator:
@@ -298,7 +297,7 @@ def _get_coordinator_for_device(hass: HomeAssistant, device_id: str) -> FluidraD
     coordinators: list[FluidraDataUpdateCoordinator] = []
     for entry in hass.config_entries.async_loaded_entries(DOMAIN):
         runtime_data = getattr(entry, "runtime_data", None)
-        coordinator = getattr(runtime_data, "coordinator", None)
+        coordinator: FluidraDataUpdateCoordinator | None = getattr(runtime_data, "coordinator", None)
         if coordinator is None:
             continue
 
@@ -314,6 +313,25 @@ def _get_coordinator_for_device(hass: HomeAssistant, device_id: str) -> FluidraD
         translation_key="device_not_found",
         translation_placeholders={"device_id": device_id},
     )
+
+
+def _ensure_device_pool_writable(coordinator: FluidraDataUpdateCoordinator, device_id: str) -> None:
+    """Fail fast when the device's pool is viewer (read-only) — Issue #133.
+
+    Mirrors ``FluidraPoolControlEntity._ensure_pool_writable`` for domain
+    services: a viewer write is accepted by the Fluidra cloud with a fake
+    HTTP 200 that never persists, so raise a clear error instead.
+    """
+    for pool_id, pool in (coordinator.data or {}).items():
+        for device in pool.get("devices", []):
+            if device.get("device_id") == device_id:
+                if pool.get("access_level") == "viewer":
+                    raise ServiceValidationError(
+                        translation_domain=DOMAIN,
+                        translation_key="pool_read_only",
+                        translation_placeholders={"pool_name": str(pool.get("name", pool_id))},
+                    )
+                return
 
 
 def _parse_service_time(value: str) -> tuple[int, int]:
@@ -338,7 +356,29 @@ def _parse_service_time(value: str) -> tuple[int, int]:
     return hour, minute
 
 
-def _service_schedule_to_fluidra(schedule: dict[str, Any], schedule_id: int) -> dict[str, Any]:
+def _device_uses_component_actions(coordinator: Any, device_id: str) -> bool:
+    """Return True when this device carries a schedule's mode in ``componentActions``.
+
+    Two payload shapes exist in the wild: ``startActions.operationName`` (a string
+    mode) and ``startActions.componentActions`` (a list, used by the eXO family).
+    Writing the wrong one doesn't fail loudly — the backend accepts it and the
+    schedule ends up mangled (Issue #175) — so mirror whatever the device already
+    reports rather than assuming.
+    """
+    device = coordinator.api.get_device_by_id(device_id) if coordinator else None
+    for sched in (device or {}).get("schedule_data") or []:
+        if isinstance(sched, dict) and isinstance(sched.get("startActions"), dict):
+            return "componentActions" in sched["startActions"]
+    return False
+
+
+def _service_schedule_to_fluidra(
+    schedule: dict[str, Any],
+    schedule_id: int,
+    *,
+    use_component_actions: bool = False,
+    include_state: bool = False,
+) -> dict[str, Any]:
     """Convert service schedule input to the Fluidra CRON schedule shape."""
     start_hour, start_minute = _parse_service_time(schedule["start_time"])
     end_hour, end_minute = _parse_service_time(schedule["end_time"])
@@ -348,23 +388,90 @@ def _service_schedule_to_fluidra(schedule: dict[str, Any], schedule_id: int) -> 
             translation_domain=DOMAIN,
             translation_key="empty_schedule_days",
         )
-    days_str = ",".join(str(day) for day in days)
+    # The service takes mobile-app day numbers (1=Mon..7=Sun, see services.yaml)
+    # but the device stores plain CRON, where Sunday is 0 — its own schedules read
+    # "* * 0,1,2,3,4,5,6" for every day (Issue #174, @Inervo). Reading already
+    # converts the other way (utils.convert_cron_days); writing never converted
+    # back, so a Sunday schedule went out as day 7, which CRON does not define.
+    days_str = ",".join(str(0 if day == 7 else day) for day in sorted({0 if d == 7 else d for d in days}))
 
-    return {
-        "id": f"schedule_{schedule_id}",
-        "enabled": schedule["enabled"],
-        "startTime": f"{start_minute:02d} {start_hour:02d} * * {days_str}",
-        "endTime": f"{end_minute:02d} {end_hour:02d} * * {days_str}",
-        "startActions": {
-            "componentToChange": 11,  # Speed component
-            "operationName": schedule["mode"],
-        },
-        "endActions": {
-            "componentToChange": 9,  # Pump component
-            "operationName": "0",  # Turn off
-        },
-        "state": "IDLE",
-    }
+    # Shape captured from the official Fluidra Connect app's PUT body (Issue #89):
+    # an integer id/groupId per slot and a single startActions.operationName. The
+    # previous payload (string "schedule_N" id, no groupId, a spurious
+    # componentToChange, plus synthesised endActions and state) was rejected by the
+    # server-side JSONata transform ("invalid scheduleUser").
+    payload: dict[str, Any] = {"id": schedule_id, "groupId": schedule_id}
+    if include_state:
+        # Written as IDLE rather than echoing a running slot's state: this is a
+        # fresh definition, not a live status. Placed here rather than appended,
+        # so the key order matches the device's own slots exactly (Issue #174).
+        payload["state"] = "IDLE"
+    payload["enabled"] = schedule["enabled"]
+    payload["startTime"] = f"{start_minute:02d} {start_hour:02d} * * {days_str}"
+    payload["endTime"] = f"{end_minute:02d} {end_hour:02d} * * {days_str}"
+    payload["startActions"] = _schedule_start_actions(schedule["mode"], use_component_actions)
+    return payload
+
+
+def _device_uses_schedule_state(coordinator: Any, device_id: str) -> bool:
+    """Return True when this device's own schedule slots carry a ``state`` field.
+
+    The eXO iQ's slots include ``"state": "IDLE"`` — visible in schedules created
+    from the Fluidra app — and a payload without it is not applied: the write
+    lands in ``desiredValue``, mangled, and ``reportedValue`` stays untouched
+    (Issue #174, @Inervo). Other devices rejected a *synthesised* state back on
+    #89, so this mirrors what the device already reports rather than assuming
+    either way, exactly as ``_device_uses_component_actions`` does for the
+    actions shape.
+    """
+    device = coordinator.api.get_device_by_id(device_id) if coordinator else None
+    for sched in (device or {}).get("schedule_data") or []:
+        if isinstance(sched, dict) and isinstance(sched.get("state"), str):
+            return True
+    return False
+
+
+def _schedule_start_actions(mode: Any, use_component_actions: bool) -> dict[str, Any]:
+    """Build ``startActions`` in the shape the target device uses (Issue #175)."""
+    if use_component_actions:
+        try:
+            value = int(mode)
+        except (TypeError, ValueError):
+            raise ServiceValidationError(
+                translation_domain=DOMAIN,
+                translation_key="invalid_schedule_mode",
+                translation_placeholders={"value": str(mode)},
+            ) from None
+        return {"componentActions": [{"id": 0, "reportedValue": value}]}
+    return {"operationName": mode}
+
+
+def _ensure_schedule_write_supported(
+    coordinator: FluidraDataUpdateCoordinator, device_id: str, component_id: int
+) -> None:
+    """Refuse a write that would leave a variable-speed schedule incomplete.
+
+    A VS-pump slot carries two component actions — chlorination under id 0 and
+    the target RPM under id 1. This service only knows the first, so writing to
+    the VS register produces a slot with no speed. The Fluidra app then fails to
+    load the device at all: its detail page hangs until the pump type is changed
+    on the unit itself, which needs physical access (Issue #174, @Inervo).
+
+    Refusing the call is recoverable. Writing is not, so this errors rather than
+    writing a slot that is known to be malformed.
+    """
+    from .device_registry import DeviceIdentifier
+
+    device = _get_device_data(coordinator, device_id)
+    if device is None:
+        return
+    mapping = DeviceIdentifier.get_feature(device, "schedule_component_map", None)
+    if isinstance(mapping, dict) and component_id == mapping.get("vs"):
+        raise ServiceValidationError(
+            translation_domain=DOMAIN,
+            translation_key="schedule_vs_pump_unsupported",
+            translation_placeholders={"device_id": device_id},
+        )
 
 
 async def _async_register_services(hass: HomeAssistant) -> None:
@@ -383,16 +490,23 @@ async def _async_register_services(hass: HomeAssistant) -> None:
         device_id = call.data["device_id"]
         schedules_data = call.data["schedules"]
         coordinator = _get_coordinator_for_device(hass, device_id)
+        _ensure_device_pool_writable(coordinator, device_id)
 
         # Convert HA format to Fluidra API format
+        component_actions = _device_uses_component_actions(coordinator, device_id)
+        include_state = _device_uses_schedule_state(coordinator, device_id)
         fluidra_schedules = [
-            _service_schedule_to_fluidra(schedule, i) for i, schedule in enumerate(schedules_data, start=1)
+            _service_schedule_to_fluidra(
+                schedule, i, use_component_actions=component_actions, include_state=include_state
+            )
+            for i, schedule in enumerate(schedules_data, start=1)
         ]
 
+        schedule_component = _get_schedule_component(coordinator, device_id)
+        _ensure_schedule_write_supported(coordinator, device_id, schedule_component)
+
         try:
-            success = await coordinator.api.set_schedule(
-                device_id, fluidra_schedules, component_id=_get_schedule_component(coordinator, device_id)
-            )
+            success = await coordinator.api.set_schedule(device_id, fluidra_schedules, component_id=schedule_component)
         except FluidraError as err:
             _LOGGER.exception("Service %s failed for device %s", SERVICE_SET_SCHEDULE, device_id)
             raise HomeAssistantError(
@@ -421,6 +535,7 @@ async def _async_register_services(hass: HomeAssistant) -> None:
         """
         device_id = call.data["device_id"]
         coordinator = _get_coordinator_for_device(hass, device_id)
+        _ensure_device_pool_writable(coordinator, device_id)
 
         try:
             success = await coordinator.api.clear_schedule(
@@ -451,9 +566,10 @@ async def _async_register_services(hass: HomeAssistant) -> None:
         device_id = call.data["device_id"]
         preset = call.data["preset"]
         coordinator = _get_coordinator_for_device(hass, device_id)
+        _ensure_device_pool_writable(coordinator, device_id)
 
         # Define presets
-        presets: dict[str, list[dict]] = {
+        presets: dict[str, list[dict[str, Any]]] = {
             "standard": [
                 {"enabled": True, "start_time": "08:00", "end_time": "12:00", "mode": "1", "days": [1, 2, 3, 4, 5]},
                 {"enabled": True, "start_time": "18:00", "end_time": "20:00", "mode": "1", "days": [1, 2, 3, 4, 5]},
@@ -512,7 +628,10 @@ async def _async_register_services(hass: HomeAssistant) -> None:
 
         # Build schedules in Fluidra format
         fluidra_schedules = [
-            _service_schedule_to_fluidra(schedule, i) for i, schedule in enumerate(presets[preset], start=1)
+            _service_schedule_to_fluidra(
+                schedule, i, use_component_actions=_device_uses_component_actions(coordinator, device_id)
+            )
+            for i, schedule in enumerate(presets[preset], start=1)
         ]
 
         try:

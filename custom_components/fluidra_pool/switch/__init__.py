@@ -2,14 +2,25 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from homeassistant.components.switch import SwitchEntity
 
-from ..const import FluidraPoolConfigEntry
+from ..const import (
+    DEVICE_TYPE_CHLORINATOR,
+    DEVICE_TYPE_HEAT_PUMP,
+    DEVICE_TYPE_HEATER,
+    DEVICE_TYPE_PUMP,
+    FluidraPoolConfigEntry,
+)
 from ..device_registry import DeviceIdentifier
+from ..platform_setup import async_setup_dynamic_platform
 from .base import FluidraPoolSwitchEntity
-from .chlorinator import FluidraChlorinatorBoostSwitch, FluidraChlorinatorSwitch
+from .chlorinator import (
+    FluidraChlorinatorBoostSwitch,
+    FluidraChlorinatorSwitch,
+    FluidraChlorinatorToggleSwitch,
+)
 from .heater import FluidraHeaterSwitch, FluidraHeatPumpSwitch
 from .pump import FluidraAutoModeSwitch, FluidraPumpSwitch
 from .schedule import FluidraScheduleEnableSwitch
@@ -22,6 +33,7 @@ __all__ = [
     "FluidraAutoModeSwitch",
     "FluidraChlorinatorBoostSwitch",
     "FluidraChlorinatorSwitch",
+    "FluidraChlorinatorToggleSwitch",
     "FluidraHeatPumpSwitch",
     "FluidraHeaterSwitch",
     "FluidraPoolSwitchEntity",
@@ -32,53 +44,72 @@ __all__ = [
 
 PARALLEL_UPDATES = 0  # Coordinator handles all updates
 
+# (profile feature, translation key, icon) for single-register boolean switches.
+TOGGLE_SWITCHES = (
+    ("low_mode", "low_mode", "mdi:speedometer-slow"),
+    ("freeze_protection", "freeze_protection", "mdi:snowflake-alert"),
+)
+
 
 async def async_setup_entry(
     hass: HomeAssistant,
     config_entry: FluidraPoolConfigEntry,
     async_add_entities: AddEntitiesCallback,
 ) -> None:
-    """Set up Fluidra Pool switch entities."""
+    """Set up Fluidra Pool switch entities, including devices added later."""
     coordinator = config_entry.runtime_data.coordinator
 
-    entities: list[SwitchEntity] = []
+    def _build(pool_id: str, device: dict[str, Any]) -> list[SwitchEntity]:
+        """Create switches for one device."""
+        entities: list[SwitchEntity] = []
+        device_id = device["device_id"]
 
-    # Use cached pools data instead of API call for faster startup
-    pools = coordinator.api.cached_pools or await coordinator.api.get_pools()
-    for pool in pools:
-        for device in pool["devices"]:
-            device_id = device.get("device_id")
+        if DeviceIdentifier.should_create_entity(device, "switch"):
+            device_config = DeviceIdentifier.identify_device(device)
+            if device_config:
+                device_type = device_config.device_type
 
-            if not device_id:
-                continue
+                if device_type == DEVICE_TYPE_HEAT_PUMP:
+                    entities.append(FluidraHeatPumpSwitch(coordinator, coordinator.api, pool_id, device_id))
+                elif device_type == DEVICE_TYPE_PUMP:
+                    entities.append(FluidraPumpSwitch(coordinator, coordinator.api, pool_id, device_id))
+                elif device_type == DEVICE_TYPE_HEATER:
+                    entities.append(FluidraHeaterSwitch(coordinator, coordinator.api, pool_id, device_id))
+                elif device_type == DEVICE_TYPE_CHLORINATOR and DeviceIdentifier.has_feature(
+                    device, "on_off_component"
+                ):
+                    entities.append(FluidraChlorinatorSwitch(coordinator, coordinator.api, pool_id, device_id))
 
-            if DeviceIdentifier.should_create_entity(device, "switch"):
-                device_config = DeviceIdentifier.identify_device(device)
-                if device_config:
-                    device_type = device_config.device_type
+        if DeviceIdentifier.should_create_entity(device, "switch_auto") and not DeviceIdentifier.has_feature(
+            device, "skip_auto_mode"
+        ):
+            entities.append(FluidraAutoModeSwitch(coordinator, coordinator.api, pool_id, device_id))
 
-                    if device_type == "heat_pump":
-                        entities.append(FluidraHeatPumpSwitch(coordinator, coordinator.api, pool["id"], device_id))
-                    elif device_type == "pump":
-                        entities.append(FluidraPumpSwitch(coordinator, coordinator.api, pool["id"], device_id))
-                    elif device_type == "heater":
-                        entities.append(FluidraHeaterSwitch(coordinator, coordinator.api, pool["id"], device_id))
-                    elif device_type == "chlorinator" and DeviceIdentifier.has_feature(device, "on_off_component"):
-                        entities.append(FluidraChlorinatorSwitch(coordinator, coordinator.api, pool["id"], device_id))
+        if DeviceIdentifier.has_feature(device, "schedules"):
+            schedule_count = DeviceIdentifier.get_feature(device, "schedule_count", 8)
+            for schedule_id in [str(i) for i in range(1, schedule_count + 1)]:
+                entities.append(
+                    FluidraScheduleEnableSwitch(coordinator, coordinator.api, pool_id, device_id, schedule_id)
+                )
 
-            if DeviceIdentifier.should_create_entity(device, "switch_auto") and not DeviceIdentifier.has_feature(
-                device, "skip_auto_mode"
-            ):
-                entities.append(FluidraAutoModeSwitch(coordinator, coordinator.api, pool["id"], device_id))
+        if DeviceIdentifier.has_feature(device, "boost_mode"):
+            entities.append(FluidraChlorinatorBoostSwitch(coordinator, coordinator.api, pool_id, device_id))
 
-            if DeviceIdentifier.has_feature(device, "schedules"):
-                schedule_count = DeviceIdentifier.get_feature(device, "schedule_count", 8)
-                for schedule_id in [str(i) for i in range(1, schedule_count + 1)]:
-                    entities.append(
-                        FluidraScheduleEnableSwitch(coordinator, coordinator.api, pool["id"], device_id, schedule_id)
+        # Plain boolean registers a profile can opt into by declaring the feature.
+        for feature, translation_key, icon in TOGGLE_SWITCHES:
+            if DeviceIdentifier.has_feature(device, feature):
+                entities.append(
+                    FluidraChlorinatorToggleSwitch(
+                        coordinator,
+                        coordinator.api,
+                        pool_id,
+                        device_id,
+                        feature,
+                        translation_key,
+                        icon,
                     )
+                )
 
-            if DeviceIdentifier.has_feature(device, "boost_mode"):
-                entities.append(FluidraChlorinatorBoostSwitch(coordinator, coordinator.api, pool["id"], device_id))
+        return entities
 
-    async_add_entities(entities)
+    await async_setup_dynamic_platform(config_entry, async_add_entities, _build)

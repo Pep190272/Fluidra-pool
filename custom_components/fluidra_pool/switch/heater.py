@@ -55,10 +55,12 @@ class FluidraHeatPumpSwitch(FluidraPoolSwitchEntity):
         if self.device_data.get("is_running", False):
             return True
 
-        return self.device_data.get("is_heating", False)
+        value: bool = self.device_data.get("is_heating", False)
+        return value
 
     async def async_turn_on(self, **kwargs: Any) -> None:
         """Turn the heat pump on using discovered API with optimistic UI."""
+        self._ensure_pool_writable()
         try:
             self._set_pending_state(True)
             self.async_write_ha_state()
@@ -69,6 +71,8 @@ class FluidraHeatPumpSwitch(FluidraPoolSwitchEntity):
                 success = await self._api.control_device_component(self._device_id, 21, 1)
                 _LOGGER.debug("Z550iQ+ turn ON result: %s", success)
             else:
+                # start_pump() resolves the correct on/off component itself via
+                # the device's "on_off_component" feature (defaults to c13).
                 success = await self._api.start_pump(self._device_id)
 
             if success:
@@ -78,6 +82,9 @@ class FluidraHeatPumpSwitch(FluidraPoolSwitchEntity):
             else:
                 self._clear_pending_state()
                 self.async_write_ha_state()
+                raise HomeAssistantError(translation_domain=DOMAIN, translation_key="heat_pump_set_failed")
+        except HomeAssistantError:
+            raise
         except (aiohttp.ClientError, TimeoutError, FluidraError, ValueError, TypeError, KeyError, AttributeError) as e:
             _LOGGER.error("Error turning on heat pump %s: %s", self._device_id, e)
             self._clear_pending_state()
@@ -86,6 +93,7 @@ class FluidraHeatPumpSwitch(FluidraPoolSwitchEntity):
 
     async def async_turn_off(self, **kwargs: Any) -> None:
         """Turn the heat pump off using discovered API with optimistic UI."""
+        self._ensure_pool_writable()
         try:
             self._set_pending_state(False)
             self.async_write_ha_state()
@@ -95,6 +103,8 @@ class FluidraHeatPumpSwitch(FluidraPoolSwitchEntity):
                 success = await self._api.control_device_component(self._device_id, 21, 0)
                 _LOGGER.debug("Z550iQ+ turn OFF result: %s", success)
             else:
+                # stop_pump() resolves the correct on/off component itself via
+                # the device's "on_off_component" feature (defaults to c13).
                 success = await self._api.stop_pump(self._device_id)
 
             if success:
@@ -103,6 +113,9 @@ class FluidraHeatPumpSwitch(FluidraPoolSwitchEntity):
             else:
                 self._clear_pending_state()
                 self.async_write_ha_state()
+                raise HomeAssistantError(translation_domain=DOMAIN, translation_key="heat_pump_set_failed")
+        except HomeAssistantError:
+            raise
         except (aiohttp.ClientError, TimeoutError, FluidraError, ValueError, TypeError, KeyError, AttributeError) as e:
             _LOGGER.error("Error turning off heat pump %s: %s", self._device_id, e)
             self._clear_pending_state()
@@ -110,10 +123,10 @@ class FluidraHeatPumpSwitch(FluidraPoolSwitchEntity):
             raise HomeAssistantError(translation_domain=DOMAIN, translation_key="heat_pump_set_failed") from e
 
     @property
-    def extra_state_attributes(self) -> dict:
+    def extra_state_attributes(self) -> dict[str, Any]:
         """Return extra state attributes."""
-        attrs = {
-            "component_id": 9,
+        attrs: dict[str, Any] = {
+            "component_id": DeviceIdentifier.get_feature(self.device_data, "on_off_component", 13),
             "operation": "heat_pump_control",
             "device_type": "heat_pump",
             "heat_pump_reported": self.device_data.get("heat_pump_reported"),
@@ -162,6 +175,7 @@ class FluidraHeaterSwitch(FluidraPoolSwitchEntity):
 
     async def async_turn_on(self, **kwargs: Any) -> None:
         """Turn the heater on (component 9 = generic ON/OFF)."""
+        self._ensure_pool_writable()
         self._set_pending_state(True)
         try:
             success = await self._api.control_device_component(self._device_id, COMPONENT_PUMP_ONOFF, 1)
@@ -174,9 +188,11 @@ class FluidraHeaterSwitch(FluidraPoolSwitchEntity):
             await self.coordinator.async_request_refresh()
         else:
             self._clear_pending_state()
+            raise HomeAssistantError(translation_domain=DOMAIN, translation_key="heater_set_failed")
 
     async def async_turn_off(self, **kwargs: Any) -> None:
         """Turn the heater off (component 9 = generic ON/OFF)."""
+        self._ensure_pool_writable()
         self._set_pending_state(False)
         try:
             success = await self._api.control_device_component(self._device_id, COMPONENT_PUMP_ONOFF, 0)
@@ -189,9 +205,10 @@ class FluidraHeaterSwitch(FluidraPoolSwitchEntity):
             await self.coordinator.async_request_refresh()
         else:
             self._clear_pending_state()
+            raise HomeAssistantError(translation_domain=DOMAIN, translation_key="heater_set_failed")
 
     @property
-    def extra_state_attributes(self) -> dict:
+    def extra_state_attributes(self) -> dict[str, Any]:
         """Return extra state attributes."""
         attrs: dict[str, Any] = {}
         if "current_temperature" in self.device_data:

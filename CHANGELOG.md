@@ -7,6 +7,657 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.78.6] - 2026-08-14
+
+### Fixed
+
+- **Schedules including Sunday were written with an undefined day number** — the `set_schedule`
+  service takes mobile-app day numbers (1=Mon..7=Sun) and wrote them straight into the CRON field,
+  but CRON has no day 7: Sunday is `0`. Reading already converted the other way round; writing never
+  converted back. Checked against schedules the Fluidra app itself created on an eXO iQ — a Sunday
+  18:00 slot reads `"00 18 * * 0"` and an all-days 05:45 slot reads `"45 05 * * 0,1,2,3,4,5,6"`,
+  both of which the service now produces exactly (Issue #174, @Inervo).
+
+### Changed
+
+- Schedule payload keys are now ordered as the device reports them, with `state` third rather than
+  appended last, in case the backend transform is positional (Issue #174).
+
+## [2.78.5] - 2026-08-13
+
+### Fixed
+
+- **`set_schedule` writes were never applied on the eXO iQ** — comparing a schedule the Fluidra app
+  created against the payload the service produces showed them identical field for field, except
+  that the device's own slots carry `"state": "IDLE"` and ours did not. Writes therefore sat in
+  `desiredValue` unapplied. The field is now mirrored from the device rather than assumed, so only
+  devices whose own schedules carry one receive it — a synthesised `state` was rejected by other
+  devices back on #89. This also confirms the time and day encoding was never at fault
+  (Issue #174, @Inervo).
+
+## [2.78.4] - 2026-08-11
+
+### Fixed
+
+- **Salinity kept showing a reading while the pump was off** — v2.78.2 falls back to the last real
+  value when the register reads 0, because chlorine production below ~40% stops the probe measuring
+  while it still sits in the same water. A no-flow condition reads 0 identically but means the cell
+  holds no flowing water, so the held value describes water that is no longer at the probe. The
+  fallback is now suppressed while the device reports an active `FLOW` alarm, restoring the previous
+  "unknown" for that case only; low production is unchanged, and a live non-zero reading always wins.
+  A `no_flow` attribute exposes which case applies (Issue #193, @FoxP).
+- **`set_schedule` could leave a variable-speed pump unreachable from the Fluidra app** — a VS-pump
+  schedule slot carries two component actions, chlorination and the target pump speed, and the
+  service only sets the first. The resulting slot had no speed, after which the app's device page
+  hung on loading until the pump type was changed on the unit itself. The service now refuses that
+  write with an explanatory error instead of performing it. Chlorination-only and simple-pump
+  schedules are unaffected (Issue #174, @Inervo).
+
+## [2.78.3] - 2026-08-09
+
+### Performance
+
+- **Faster setup on every HA restart** — the config-entry setup previously ran
+  four sequential HTTP round-trips (refresh token → profile → pools → devices).
+  The profile fetch and the pool/device discovery only depend on the freshly-obtained
+  access token, so they now run concurrently, and per-pool device discovery is
+  parallelized for multi-pool accounts. Measured on the HA dev instance:
+  `config_entry_setup` drops from ~2.18s to ~1.19s (-45%).
+
+## [2.78.2] - 2026-08-09
+
+### Fixed
+
+- **Enabling/disabling a schedule could bounce with an API error** — the schedule toggle echoed each
+  slot back to the API verbatim, including the read-only runtime fields `state`/`endActions`. The
+  Fluidra backend rejects those in a write payload (`invalid scheduleUser`, Issue #89), so toggling a
+  schedule on any device failed. The write now strips them (Issue #174).
+- **Zodiac eXO iQ: editing a schedule's start/end time reset its mode and shifted the days** — the
+  time entities rebuilt every slot from scratch as `operationName` with a `"0"` default, so a unit
+  whose schedule mode lives in `componentActions` silently lost it, and the cron day field was run
+  through a 0→7 conversion on every write even though it had just been read back from the API in its
+  own format. Entries are now copied verbatim and only the edited time changes, preserving the mode
+  and the days (Issue #174).
+
+## [2.78.1] - 2026-08-06
+
+### Fixed
+
+- **Zodiac eXO iQ: schedule entities were unavailable for anything but a simple pump** — the eXO
+  keeps chlorination-only schedules on `c19`, simple-pump ones on `c20` and variable-speed ones on
+  `c21`, honouring only the register that matches its configured pump. The integration always read
+  `c20`. Reading "whichever register has entries" is not an option either: stale schedules survive a
+  configuration change, so two registers can hold data at once with one of them dead, which would
+  show a schedule the device ignores and write edits into a register nothing reads. Six captures pin
+  the discriminator instead — no pump leaves `c82`/`c83` both false, a simple pump sets `c82`, a
+  variable-speed pump sets `c83` — and the register now follows from those. Profiles that declare no
+  such map are unaffected (Issue #174, @Inervo).
+
+### Changed
+
+- **Zodiac eXO iQ: six schedule slots instead of four**, matching what the app offers
+  (Issue #174, @Inervo).
+
+## [2.78.0] - 2026-08-06
+
+### Added
+
+- **Z250iQ / Z260iQ: `hvac_action` now reflects the live compressor state** — the action was derived
+  from `c14`, which only reports the mode the unit was *set to*, so a heat pump sitting idle at its
+  setpoint still showed as heating. `c75` reports what the compressor is actually doing: `0` idle,
+  `16` heating, `24` cooling, confirmed on hardware by driving the unit through Boost/Silent and
+  Heating/Cooling. Only those three values are trusted — a transient `8` was seen for a few seconds
+  after a mode change and remains unexplained, so any other value falls through to the previous
+  mode-derived behaviour, and units that never report `c75` are unaffected (Issue #139, @Kal42).
+
+## [2.77.0] - 2026-08-06
+
+### Added
+
+- **Blue Connect Gold: conductivity sensor** — `c15` reports water conductivity in µS/cm. It had
+  already been identified in passing while pinning salinity on #75 (`c15` ≈ 8461, which is why
+  salinity is `c16`), and is now confirmed independently against the app's Information page reading
+  1362 µS/cm (Issue #186, @Kal42).
+
+### Fixed
+
+- **Blue Connect: the ESP32 firmware version was reported as a hardware fault** — the BC3 carries
+  two firmwares, nRF on `c3` and ESP32 on `c4`, both shown on the app's Information page. `c4` fell
+  through to the standard layout's `hardware_errors` slot, so a version string surfaced as a fault
+  on the device-info sensor. It is now a `secondary_firmware` attribute (Issue #186, @Kal42).
+
+## [2.76.0] - 2026-08-06
+
+### Added
+
+- **Blue Connect: WiFi signal sensor** — the BC3 reorders the info slots and the integration was
+  already decoding `c0` as the RSSI, but neither the Silver nor the Gold profile declared an entity
+  for it, so the value arrived with nowhere to go. Confirmed against a Blue Connect Gold dump
+  reading `-67` on `c0`. Declared on both profiles, since a Gold can resolve to either depending on
+  the serial it reports (Issue #186, @Kal42).
+
+## [2.75.2] - 2026-08-06
+
+### Fixed
+
+- **Z250iQ WiFi signal reported unknown** — v2.75.1 made the sensor appear but it read the wrong
+  register. The iQ heat pumps use a second info layout — `c0`=running hours, `c1`=RSSI, `c2`=IP
+  address, `c3`=serial, `c4`=firmware — not Fluidra's standard `0`=id/`1`=parts/`2`=RSSI/`3`=firmware
+  slots, so the sensor was being handed an IP string that `float()` could not parse. Confirmed by
+  @Kal42's live Z250iQ register map on #139 ("c1: Wi-Fi RSSI", "c2: IP address"). The Z650iQ already
+  had this layout hardcoded behind its own flag; it is now a shared `info_layout` the LF* profiles
+  declare too, which also corrects their serial and firmware readings (Issue #183, @paradox37).
+- **CC24018506: chlorination level, boost, pH and ORP setpoints now reach the device** (PR #185,
+  @luistf76) — four write/read pairs inherited from the generic catch-all were never verified against
+  real hardware. `c8` and `c11` turned out to be dead write sinks (writes landed and stayed, the
+  device never consumed them) and the declared boost component did not exist on this model. All four
+  now use the single component the official app reads and writes, matching the rest of the tecnoLC2
+  family. `c103` was also added to the scan set: that list is exhaustive, so a mapped-but-unlisted
+  register is written and never read back — the boost switch would have snapped to off after each poll.
+
+## [2.75.1] - 2026-08-05
+
+### Fixed
+
+- **WiFi signal sensor now actually reaches Z250iQ units** — v2.75.0 declared the sensor only on
+  the Z260iQ profile, but LF* heat pumps split across two profiles by reported name and a real
+  Z250iQ resolves to its own. The entity is now declared on both. The test that let this ship
+  asserted against one profile's entity list rather than following a device through identification,
+  so it passed while the feature was unreachable; it now starts from a device (Issue #183,
+  @paradox37).
+- **CC24018506: live pH (c165) and salinity (c174) are mapped** (PR #184, @luistf76) — the earlier
+  "no live pH/salinity on this bridge" conclusion compared `c165` against `c8`, itself only a
+  setpoint write echo, and both registers sat outside the scan list so they never reached
+  diagnostics to be checked. Live reads compared against the official app confirm both. This
+  brings the profile back in line with the standard tecnoLC2 layout used by its sibling profiles.
+
+## [2.75.0] - 2026-08-05
+
+### Added
+
+- **Zodiac eXO iQ: heating setpoint** — when an aux output is assigned to heating, the target
+  temperature (`c43`, whole °C) is now a number entity. Proven by an isolated capture: changing
+  only the setpoint in the app moved `c43` from 27 to 23, with nothing else shifting but the RSSI
+  and the clock. The entity stays unavailable until `c88` reports heating as configured, since an
+  aux has to be assigned to heating on the unit itself first (Issue #175, @Inervo).
+- **Zodiac Z250iQ / Z260iQ: WiFi signal sensor** — the RSSI was already being decoded from `c2`
+  under the standard info layout; the profile simply never exposed an entity for it. This is the
+  same value Fluidra support reads in the cloud (Issue #183, @paradox37).
+
+## [2.74.0] - 2026-08-04
+
+### Added
+
+- **Zodiac eXO iQ: Aux 1 / Aux 2 outputs** — each auxiliary output is now a three-state select
+  (Off / On / Auto) on `c30` and `c31`. Both values were observed directly in @Inervo's captures:
+  `c30` went 0 → 1 when Aux 1's light was switched on, and `c31` sat at 2 with Aux 2 on Auto,
+  dropping to 0 when switched off. The eXO can wire an aux to a light, a backwash valve, heating
+  or a plain relay — that assignment is made on the unit and only changes what the official app
+  offers, not how the register behaves, so this stays a neutral three-state select rather than
+  guessing at a light or a switch. What the output is actually wired to (`c90`/`c91`, e.g.
+  `Lighting`) is exposed as an `assigned_function` attribute (Issue #175, @Inervo).
+
+## [2.73.1] - 2026-08-03
+
+### Fixed
+
+- **Crash when a chlorinator reports a malformed alarm entry** (PR #182, @luistf76) — an active
+  alarm whose `default` field was a truthy non-dict (a bare string, a list, a number) went
+  straight through `alarm.get("default") or {}` and raised `AttributeError` on the following
+  `.get()`. Such entries are now rejected before flattening. An explicit `default: None` is
+  deliberately still accepted: it cannot crash, and dropping it would hide a genuinely active
+  alarm just because its display strings are missing. Affected v2.72.0 and v2.73.0.
+
+### Changed
+
+- **Corrected the eXO iQ `c36` documentation** — it was recorded as the low-salt threshold; it is
+  in fact the pump RPM setpoint, tracking 2750 → 2748 → 2413 as the pump is reconfigured. 2750 is
+  the default speed, which is why it read as a static, salinity-plausible value. The conclusion it
+  supported is unchanged and now proven rather than inferred: a complete 76-register dump from an
+  NS25 contains no salinity-shaped value at all, so the eXO iQ correctly maps no salinity sensor
+  (Issue #143, @AminShAT / Issue #175, @Inervo).
+
+## [2.73.0] - 2026-08-03
+
+### Added
+
+- **Zodiac eXO iQ: Boost, Low, Freeze protection and boost countdown** — the unmapped-register
+  logger paid off: @Inervo pinned each control by toggling it in the app and diffing the full
+  register dump, which isolated `c46` (boost), `c45` (Low), `c48` (freeze protection) and `c51`
+  (boost minutes remaining, 1438 on a fresh 24 h cycle). Boost had previously been marked
+  unsupported on the eXO because the first attempt targeted `c14`, which is unreadable there and
+  403s on write. Unlike the CC/tecnoLC2 units the eXO accepts boost while in AUTO, so its switch
+  no longer forces the unit to ON first — which would have silently dropped the user's mode
+  (Issue #175, @Inervo).
+
+## [2.72.0] - 2026-08-03
+
+### Added
+- **Z650iQ heat pump support** (PR #180, @jheizmann) — new device profile, added and reverse-engineered
+  from ~24h of live-unit captures (bulk-fetch snapshots plus Home Assistant
+  history across full on/off cycles): climate entity (HVAC modes, Smart+/Smart/
+  Ecosilence/Boost presets, target/water/air temperature), on/off switch,
+  instantaneous power sensor (Watts), running-hours and compressor-running-hours
+  sensors, a compressor-modulation sensor (percent) and a WiFi signal sensor.
+  Only registers whose meaning is confirmed are polled — the rest stay visible
+  through the unmapped-register debug log added in 2.71.0, for whoever decodes
+  them next.
+
+- **All active chlorinator alarms are now listed** (PR #179, @luistf76). The alarm sensor previously exposed only the first active alarm; it now also carries the complete list as an `active_alarms` attribute, so simultaneous alarms can all be identified. The existing single-alarm attributes are unchanged.
+
+### Fixed
+- **`start_pump`/`stop_pump` hardcoded component 13 as the on/off register for
+  every heat pump family.** That's a live water-temperature register on the
+  Z650iQ, so writing 0/1 to it silently corrupted the reading instead of
+  turning the unit on/off. Both now resolve the on/off component per-family
+  via a new `on_off_component` device-config feature (still defaults to
+  component 13 for existing families, so no behavior changes for them).
+
+## [2.71.1] - 2026-08-03
+
+### Fixed
+- **Schedules were being corrupted when changed from Home Assistant** (Issue #175, @Inervo). Enabling or disabling a schedule — or using the `set_schedule` action — could scramble its times, days and mode, with the damage carried back into the official Fluidra app. The integration rebuilt the whole schedule payload on every write, assuming one particular format; on equipment using a different one (such as the eXO iQ) that silently reset the mode and shifted the configured days. Toggling a schedule now changes only the on/off flag and leaves everything else exactly as the device reported it, and the `set_schedule` action writes whichever format your equipment actually uses.
+
+## [2.71.0] - 2026-08-01
+
+### Added
+- **Easier reporting of unsupported features** (Issues #174/#175). When debug logging is enabled, the integration now lists once per device the registers your equipment reports but no profile understands, with their current values. If a feature works in the Fluidra app but is missing in Home Assistant, enabling debug logging and toggling that feature in the app makes the responsible register visible directly — much quicker than sending several diagnostics exports that can only contain the already-supported values.
+
+## [2.70.3] - 2026-08-01
+
+### Fixed
+- **Wasted repeated requests for devices that don't support the fast component fetch** (Issue #175, @Inervo). Some accounts include virtual devices (such as a manual test-strip entry) that reject the bulk endpoint introduced in v2.66.0. The integration is meant to give up on that endpoint per device after a few failures, but the counter was shared: every other device's success reset it, so the unsupported one was retried on every single poll forever. Each device now tracks its own failures, so it falls back once and stays there while everything else keeps the faster path.
+
+## [2.70.2] - 2026-07-31
+
+### Fixed
+- **The chlorinator alarm sensor was missing on almost every chlorinator** (PR #173, @luistf76). The sensor added in v2.70.0 was accidentally created only for the two profiles that also report cell production, so 50 of the 52 chlorinator profiles never got it. It is now created for every chlorinator, as intended.
+- **An active alarm could be cleared by a failed status poll** (PR #173, @luistf76). If the cloud request that carries the alarm list failed or came back without that device, the alarm silently reset to "no alarm" instead of keeping the last known state — the same stale-data trap the sensor's offline guard already protects against. Alarms are now preserved across a failed poll, exactly like the component readings already were.
+
+## [2.70.1] - 2026-07-30
+
+### Fixed
+- **Sensors could freeze on old values indefinitely after a network problem** (PR #172, @fredfrazao). If every component read for a device kept failing — as happened after a brief DNS outage tripped the API circuit breaker — the integration had no way to tell "nothing changed" from "everything is broken". The affected device's sensors quietly kept showing their last known values, with no error, no repair notification and no reauthentication prompt; only restarting Home Assistant recovered it (observed frozen for 6+ hours). Repeated empty reads for a device are now treated as the failure they are, so the usual connection warning appears instead of stale data pretending to be current.
+
+## [2.70.0] - 2026-07-29
+
+### Added
+- **Chlorinator alarm sensor** (Issue #163, PR #170, @luistf76) — the alarms Fluidra's cloud reports for a chlorinator (e.g. a stopped pH pump) were only visible in the official app. They now appear as a problem sensor, with the error code and description as attributes. It deliberately reports *unknown* rather than "no alarm" when the device is offline, because the cloud keeps serving a cached alarm snapshot for disconnected equipment — the last confirmed state stays available as an attribute so a dashboard can still show something useful.
+- **No-flow fault sensor for Z250iQ / Z260iQ heat pumps** (Issue #139, @Kal42) — error **E03** (no water flow) was already detected but only surfaced as an attribute of the climate entity, so it couldn't trigger an automation. It now has its own problem sensor, alongside the air-temperature fault added in v2.69.0.
+
+### Fixed
+- **AstralPool Energy Connect chlorinator `CC26027341`** (PR #171, @fredfrazao) — the unit fell back to the generic profile, which read the water temperature (c172) as pH (2.59-2.60 instead of 25.9-26.0 °C) and did not surface a working ORP/salinity reading matching the app. Added to the Energy Connect tecnoLC2 profile: pH (c165), ORP (c170) and salinity (c174) now report live values matching the Fluidra app. This unit's c8 was non-blank (720), so the automatic tecnoLC2-signature detection never routed it here on its own.
+
+## [2.69.0] - 2026-07-28
+
+### Added
+- **Air-temperature fault sensor for Z250iQ / Z260iQ heat pumps** (Issue #139, @Kal42). These units raise error **E13** when the intake air goes above ~43 °C and then refuse to run. That fault is now exposed as a problem sensor, so you can be notified instead of wondering why the pool isn't heating.
+
+## [2.68.0] - 2026-07-28
+
+### Added
+- **Run your Victoria pump's quick functions from Home Assistant** (Issue #144, @renaatski). A new **Quick function** select lists the presets configured on the pump itself — Clean, High/Mid/Low speed, your flow-rate presets — with their targets, and selecting one starts it, exactly as the app's quick-function tiles do. The list is read from the pump, so renaming or reconfiguring a preset is reflected automatically, and the select shows which one is currently running.
+
+## [2.67.0] - 2026-07-28
+
+### Added
+- **See which schedule is running your Victoria pump, and for how long** (Issue #144, @renaatski). While a pump runs under one of its automations, the **Activity** sensor now shows the schedule's **name**, its **target** (speed % or flow m³/h) and a **remaining-time countdown**. The pump itself publishes none of this while a schedule drives it — its setpoint registers read zero — so the integration reads the pool's automation list and matches the entry that's actually running, exactly like the official app does. Pools without schedule-driven equipment don't make the extra request.
+
+## [2.66.0] - 2026-07-28
+
+### Changed
+- **Far fewer requests to the Fluidra cloud** (Issue #144, endpoint discovered by @renaatski). Each poll used to issue one request *per component per device* — dozens per cycle on a well-equipped pool, which is what triggered the cloud's rate limiting (HTTP 429) in the first place. The integration now fetches every component of a device in a **single request**, using the same endpoint the official app uses. Expect noticeably less traffic and fewer rate-limit hiccups, with no change to what you see in Home Assistant.
+- The bulk fetch is best-effort: if it fails or returns something unexpected, that poll transparently falls back to the previous per-component reads, and after a few consecutive failures the integration stops trying it for the session. Installations whose backend doesn't support it keep working exactly as before.
+
+## [2.65.0] - 2026-07-28
+
+### Added
+- **Victoria Smart Connect VS activity sensor** (Issue #144, @renaatski). A new **Activity** sensor reports what the pump is actually doing — including the transient **priming** and **calibration** phases it cycles through when starting — instead of those phases leaking into the speed reading. It also distinguishes a scheduled run from a manual (quick-function) one.
+- **Active quick-function details.** When the pump runs a quick function or preset, the activity sensor exposes its name, mode (speed vs flow) and setpoint; for a *timed* function (e.g. Clean) it also exposes the end time and a live remaining-seconds countdown. These are deliberately hidden during a schedule-driven run, where the underlying register goes stale.
+
+### Fixed
+- **Auto toggle no longer flaps while the pump settles** (Issue #144). Victoria pumps take 15-30 s for the cloud to reflect a command, and arming the schedule kicks off a ~1 minute priming/calibration sequence. The toggle now holds the state you selected for up to 2 minutes instead of 10 seconds, so it no longer bounces through intermediate values before the pump catches up.
+
+## [2.64.2] - 2026-07-27
+
+### Fixed
+- **Pool owner wrongly blocked as "viewer (read-only)"** (Issue #166, @HugoMontenegro). The read-only guard classified an account as viewer whenever every contract on the pool was viewer-only and the account wasn't matched in that list — but a legitimate owner whose consumer id doesn't equal `pool.owner` (multi-consumer or migrated accounts, or an unresolved user id) lands there too, with the contracts listing only the people they shared with. Because "viewer" actively blocks control commands, this locked such owners out of everything. Viewer is now only concluded from a positive per-account contract match, never inferred; an unmatched account is treated as unknown (non-blocking). Genuine viewers (whose own contract says viewer) are unaffected.
+
+## [2.64.1] - 2026-07-27
+
+### Fixed
+- **Swim & Fun inverter heat pump not recognised** (Issue #164, PR #165, @jens3105). This unit reports the component-7 signature `BXWAB` instead of the Eco Elyo's `BXWAA`, so it missed the score bonus that selects the LG heat-pump profile and fell through to the generic pump profile — no climate entity. `BXWAB` is now recognised as an LG heat pump (its component map is identical, verified against live values), so it gets the climate entity with setpoint, presets, water temperature and the 10-40 °C range.
+
+## [2.64.0] - 2026-07-24
+
+### Changed
+- **The Victoria Smart Connect VS profile is now verified** (Issue #144, @renaatski). On-device testing confirmed the on/off + auto-schedule control behaves correctly, so the profile is no longer a best-guess and the "device profile not verified" warning no longer appears for Victoria pumps. Direct speed control (via the pump's `/schedulers` API) and activity/telemetry polish are still being added, but the core control and readings are solid.
+
+## [2.63.2] - 2026-07-21
+
+### Fixed
+- **Victoria auto-mode toggle wrongly showed "off" while a quick function ran** (Issue #144, @renaatski). The Auto state was read from the running-mode register (c16), which becomes `QUICK FUNCTION` / `PUMP CALIBRATION` etc. during a run — so starting a quick function made HA report Auto off even though the schedule was still armed. Auto is now read from c13 (the schedule-armed flag), matching the app.
+
+## [2.63.1] - 2026-07-21
+
+### Fixed
+- **Boost switch missing on tecnoLC2 "Evo" chlorinators** (Issue #162, @FoxP). The shared Evo profile (Astralpool Clear Connect Evo, Zodiac Ei2 iQ Evo, IBASEL Evoflex) scanned the boost register c103 but never mapped it, so no boost switch was created even though the app exposes it. Boost (c103) is now mapped for all serials on this profile.
+
+## [2.63.0] - 2026-07-21
+
+### Added
+- **Victoria Smart Connect VS — app-like control** (Issue #144, @renaatski). The pump is schedule-driven, so control now mirrors the native app: an **Auto-schedule toggle** and a dedicated **Stop button** (a new `button` entity) that halts the motor *without* disarming the schedule — future scheduled blocks still run. To fully park the pump (stop + disarm), turn the Auto toggle off. The speed-preset dry-contact inputs (Low/Medium/High) are exposed as diagnostic **binary sensors** so an external relay (e.g. an ice-guard interlock) can drive Home Assistant automations.
+
+### Changed
+- **The Victoria's plain on/off switch is replaced** by the Auto toggle + Stop button above. The old pump on/off switch entity will disappear after updating (you can delete the leftover entity from Settings → Entities). This matches how the pump actually behaves and fixes the earlier stop action that wrongly disarmed the schedule.
+
+## [2.62.0] - 2026-07-21
+
+### Added
+- **Victoria Smart Connect VS speed-preset digital inputs** (Issue #144, @renaatski). The pump's physical dry-contact input terminals — Low (c29, 50 %), Medium (c28, 75 %), High (c27, 100 %) — are decoded and surfaced as attributes on the pump speed sensor. They're only active when an external relay is wired to a terminal (e.g. an ice-guard interlock), so they're attributes rather than always-off entities.
+
+### Fixed
+- **Victoria on/off toggle flipped through intermediate states** (Issue #144, @renaatski). Stopping the pump now writes only `c13=0` (disarm the scheduler), which on-device already forces the STOP / NOT-RUNNING state and cuts power — the extra `c15` write that followed was redundant and caused the toggle to bounce through several states before settling.
+
+## [2.61.1] - 2026-07-21
+
+### Fixed
+- **Removed the always-0 "chlorination actual" sensor on Irripool iSalt** (Issue #156). The c164 register added in v2.60.0 turned out to read 0 even while the cell is actively producing (confirmed by @pierredf31-tech's dump, salinity non-zero at the same moment), so it was never the live-output value. The misleading sensor is gone; on this family, salinity rising above 0 is the real "cell is producing" signal.
+
+## [2.61.0] - 2026-07-21
+
+### Added
+- **Victoria Smart Connect VS — on/off and auto-schedule control** (Issue #144, from @renaatski's verified write-path capture). The pump ignores the E30iQ on/off registers; control now routes through the real ones — the pump switch stops the motor (disable the auto schedule then fire the STOP trigger) and resumes it (re-enable the auto schedule), and the auto-mode switch toggles the schedule directly. Direct speed / quick-function control is the remaining piece. The profile stays *unverified* pending on-device confirmation, so please report how it behaves.
+
+## [2.60.0] - 2026-07-21
+
+### Added
+- **Victoria Smart Connect VS — flow-rate sensor and richer state** (Issue #144, @renaatski, from a full traffic capture). New **flow rate** sensor (c25, m³/h) alongside the existing power and head sensors. The pump's hardware limits (min/max speed % on c42/c43, min/max flow m³/h on c44/c45) are now read too — kept for the upcoming write-path work. The `PRIMING` motor state now counts as running, and the `AUTO PRIMING` / `STOP` operating states are recognised.
+- **Live chlorination output sensor for Irripool iSalt** (Issue #156, @pierredf31-tech). A new "chlorination actual" sensor reads the real production output (c164) — 0 when the cell is idle (ORP at target) — as opposed to the chlorination-level setpoint. Currently mapped on the Irripool iSalt profile.
+
+## [2.59.1] - 2026-07-20
+
+### Fixed
+- **Victoria Smart Connect VS speed sensor showed "not running" while the pump was turning** (Issue #144, @renaatski). In AUTO / schedule mode the pump doesn't publish its live output % (c21 stays 0) even though it's running — the power (c22) and head (c24) telemetry confirm it turns. The speed sensor now reads a dedicated **running** state in that case instead of the misleading "not running". Pumps that do report a live % are unchanged.
+
+## [2.59.0] - 2026-07-19
+
+### Added
+- **Zodiac Ei2 pH Evo `CC25001311` — now with ORP** (Issue #157, @Stephox68). The unit was first mapped on the pH-only Ei2 profile, but the reporter confirmed the Fluidra app shows an ORP/Redox value for it, so it carries the ORP probe. It now maps on a dedicated standard tecnoLC2 profile with ORP: pH (c165), ORP (c170), water temperature (c172), salinity (c174), pH setpoint (c16), ORP setpoint (c20), chlorination (c10) and boost (c103).
+
+## [2.58.0] - 2026-07-19
+
+### Added
+- **Irripool iSalt `LC25029922`** (Issue #156, @pierredf31-tech) — added to the existing Irripool iSALT tecnoLC2 profile. pH now reads on c165 (7.41), ORP on c170 (687 mV), water temperature on c172 (26.1 °C — the generic profile misread it as pH 2.61), with the pH setpoint on c16, ORP setpoint on c20 and chlorination on c10, and the "unverified profile" warning clears.
+
+### Fixed
+- **Auto-detected tecnoLC2 chlorinators kept reading water temperature as pH.** A chlorinator with an unrecognised serial is first matched to the generic domoticS2 catch-all (pH on c172) and only re-routed to the correct tecnoLC2 profile (pH on c165) one poll later — after its entities were already built. Because the measurement sensors froze their component at creation and are never rebuilt, pH stayed on c172 and displayed the water temperature (e.g. 2.61 instead of 7.4) indefinitely, even after a full restart. The chlorinator sensors now resolve their component from the current profile on every read (as the pH/ORP setpoint controls already did), so the automatic tecnoLC2 detection added in v2.54.0 actually corrects the readings without a dedicated profile.
+
+## [2.57.0] - 2026-07-18
+
+### Added
+- **Zodiac Ei2 pH Evo `CC25001311`** (Issue #157, @Stephox68) — added to the pH-only tecnoLC2 Ei2 iQ pH Evo profile. The generic profile read c172 (the water temperature, 31.9 °C) as pH → 3.19 while the app showed 7.4; the unit now reads pH on c165, water temperature on c172 and salinity on c174, with the pH setpoint on c16 and chlorination on c10, and the "unverified profile" warning clears.
+
+## [2.56.0] - 2026-07-18
+
+### Added
+- **Victoria Smart Connect VS — read-side support** (Issue #144, @MiguelCosta; register captures by @renaatski) — the pump reports its state as *strings* on registers the numeric E30iQ layout never used, decoded from five running/stopped/flow/speed captures: c14 `RUNNING`/`NOT RUNNING`, c16 `AUTO`/`QUICK FUNCTION`, c17+c18 the target and its kind (`SPEED` % or `FLOW` m³/h), c21 the live output %. The pump and auto-mode switches now show the real state (previously always "off"), the speed sensor reads the live output % even under a schedule, and the mode/setpoint are exposed as attributes. Two new sensors surface telemetry cross-checked against the pump's local HMI: **Power** (c22, W — exact at high speed, factory performance-curve data below) and **Head** (c24, reported in cm, shown in m). The write path (start/stop, speed control from HA) is still unknown — captures of what the official app writes are welcome in Issue #144 — so the profile stays unverified and control commands are not wired yet.
+
+## [2.55.0] - 2026-07-14
+
+### Added
+- **Astra Pool Energy Connect `CC26002143`** (Issue #153, @Squallium) — added to the AstralPool Energy Connect profile (tecnoLC2, pH + ORP). pH (c165, 7.3), ORP (c170, 706 mV), water temperature (c172, 28.8 °C — the generic profile misread it as pH 2.88) and salinity (c174) now map correctly and the "unverified profile" warning clears.
+
+## [2.54.0] - 2026-07-14
+
+### Added
+- **Automatic detection of unknown tecnoLC2 chlorinators** — a chlorinator with an unrecognised serial that would otherwise land on the generic domoticS2 catch-all is now re-routed to the correct tecnoLC2 profile when its components give it away (c8, the domoticS2 pH setpoint, is blank and c172 sits in the water-temperature band rather than the pH band). These units get the right pH (c165), ORP (c170), water temperature (c172) and salinity (c174) registers and the "unverified profile" warning clears, without waiting for the serial to be added by hand. Recognised serials and genuine domoticS2 units are unaffected.
+- **Astralpool Clear Connect `CC25060723`** (Issue #152, @ClaudeK83) — self-diagnosed as the existing Clear Connect layout; added to that verified profile.
+
+## [2.53.0] - 2026-07-13
+
+### Added
+- **AstralPool Advance Connect support** (Issue #149, @sergielez) — the LC24025216 serial (a tecnoLC2 chlorinator) now resolves to a verified profile instead of the generic catch-all. pH (c165), ORP (c170), water temperature (c172) and salinity (c174) are mapped on the right registers instead of misreading c172 (water temperature, 28.2 °C) as pH, and chlorination control writes to c10. This also clears the "unverified device profile" repair issue for this unit.
+
+### Changed
+- CI maintenance: bumped `actions/cache` to v6, and Renovate no longer opens PRs bumping the hand-pinned `python-version` values in the workflows (the Floor compat job deliberately pins the HA floor 3.13).
+
+## [2.52.0] - 2026-07-13
+
+### Added
+- **Zodiac/Fluidra Victoria Smart Connect VS — initial recognition** (Issue #144, @MiguelCosta) — the variable-speed Victoria pump now matches a dedicated profile (by model name) instead of the generic pump fallback. A capture taken while the pump ran at 100 % showed the standard on/off (c9) and auto (c10) registers both reading 0, so — unlike the E30iQ — this pump reports its speed and running state on other components that the narrow generic scan never fetched. This profile widens the diagnostic scan to the full pump register window (c9-c24) so the next running capture reveals the real registers; it is intentionally left **unverified** (the "device profile not verified" warning stays, and control is still the basic generic on/off) until the speed/state mapping is confirmed and wired up.
+
+## [2.51.0] - 2026-07-12
+
+### Added
+- **Zodiac GenSalt OE iQ 20" support** (Issue #145, @Ibizagrove) — the CC26009743 serial (a tecnoLC2 chlorinator) now resolves to a verified profile instead of the generic catch-all. Chlorination control writes to the correct register (c10, fixing the "cannot set device value" error), and pH (c165), ORP (c170), water temperature (c172) and salinity (c174) are mapped on the right registers instead of misreading c172 (water temperature) as pH. This also clears the "unverified device profile" repair issue for this unit.
+
+### Fixed
+- **eXO iQ (NS25) salinity sensor no longer shows a frozen placeholder** (Issue #143, @AminShAT) — the eXO iQ exposes no live salinity over the API (the official app shows only pH/ORP/temperature and merely raises a low-salt alarm), and the register the integration read (c36) is a static low-salt threshold that stayed pinned at 2.75 g/L for days. The salinity sensor is now dropped from the NS25/eXO profile rather than reporting a value that never changes; pH, ORP and water temperature are unaffected.
+
+## [2.50.1] - 2026-07-12
+
+### Fixed
+- **Heat/cool `hvac_action` no longer over-reports in the 1-2 °C band** (Issue #139, @Kal42) — the Smart Heat+Cool direction is inferred from the water-vs-setpoint delta, and the deadband is now ±2.0 °C instead of ±1.0 °C. A Z250iQ power-meter capture showed the compressor stays off until the water is 2 °C past the setpoint (28 °C setpoint → engages at 30 °C), so the previous ±1 °C window claimed *heating*/*cooling* a full degree before the unit actually ran. The entity now stays *idle* through the 1-2 °C band on the Z250iQ / Z260iQ / Z550iQ family.
+
+## [2.50.0] - 2026-07-12
+
+### Added
+- **pH-only Domotic S2 chlorinator support** (Issue #144, @MiguelCosta) — the DM25028908 serial (a domoticS2 chlorinator with no ORP probe and no salt) now resolves to a verified device profile instead of the generic catch-all. Chlorination (c4 desired / c164 reported), pH setpoint (c8), pH probe (c172), water temperature (c183) and salinity (c185) are mapped on the correct registers, with ORP left unmapped since the unit has no ORP probe. Every value was cross-checked against the official app (chlorination 50 %, pH 7.4 / 7.04, water 28.7 °C). This also clears the "unverified device profile" repair issue for this unit.
+
+## [2.49.2] - 2026-07-10
+
+### Added
+- **AstralPool Clear Connect EVO 12 support** (Issue #142, @LudovicOmarini) — the CC25059122 serial is a rebadged Energy Connect (tecnoLC2): it now resolves to the verified Energy Connect profile instead of the generic catch-all. pH moves to the live probe (c165), ORP to the calibrated register (c170, the raw c177 reads ~50 mV high), water temperature to c172 (anchored against the app: 239 → 23.9 °C, previously misread as pH 2.39) and salinity to c174. This also clears the "unverified device profile" repair issue for this unit.
+
+## [2.49.1] - 2026-07-09
+
+### Added
+- **Neolysis Connect chlorinator support** (Issue #141, @overcraft47) — the Neolysis Connect (domoticS2 family) now resolves to a verified device profile instead of the generic catch-all: pH (c172), ORP (c177), water temperature (c183), salinity (c185), free chlorine (c178) and the chlorination level (c4 desired / c164 reported) are mapped on the correct registers, and the pH / ORP setpoint number entities read the actual targets (c8 = 7.20, c11 = 700 mV) rather than the live measurements. This also clears the "unverified device profile" repair issue for this unit — the very repair issue that surfaced the mapping in the first place.
+
+## [2.49.0] - 2026-07-09
+
+### Added
+- **Repair issue for unrecognized device profiles** — when a device (typically a not-yet-supported chlorinator) matches a generic catch-all profile whose sensor mapping is only a best guess, Home Assistant now surfaces a repair issue guiding you to download the diagnostics and open an issue, instead of silently reporting possibly-wrong pH / ORP / temperature readings.
+
+### Changed
+- **Minimum Home Assistant version raised to 2025.4.** The integration already imported a core API (`AddConfigEntryEntitiesCallback`) that only exists since HA 2025.4, so it would in fact fail to load on the 2025.1–2025.3 range the manifest previously claimed to support. The declared floor now matches reality, and a new CI job re-checks floor compatibility on every change.
+- Sensor devices now expose the firmware version (`sw_version`), consistent with the other platforms.
+- Internal refactoring with no user-facing behaviour change: the heat-pump climate entity is split into per-family behaviour objects, and the per-platform entity setup is factored into a single shared helper. Verified behaviour-preserving against the full test suite.
+
+### Security
+- **Device serial numbers and pool ids are no longer exposed in diagnostics dumps.** The raw device `status` block (`status.id`, plus bridged children under `status.devices[]`) and the pool id value are now redacted like every other identifier. Diagnostics dumps shared before this release should be considered as having leaked those ids.
+
+## [2.48.1] - 2026-07-08
+
+### Fixed
+- **`hvac_action` no longer stuck on `idle` in Smart Heat+Cool** (Issue #139 follow-up, @Kal42) — mode 2 (Smart H+C) carries no direction register, so the previous code always reported `idle` even while the unit was actively heating or cooling. The action is now inferred from the water-vs-setpoint delta with a ±1.0 °C deadband (heating below, cooling above, idle when the setpoint is satisfied) — the same approach the unit's own regulation uses. Applies to the Z260iQ family (incl. the promoted Z250iQ) and LG heat pumps; explicit heating/cooling presets and the no-flow/off guards keep priority. Heuristic until a real state register (like the Z550's c61) is identified.
+
+## [2.48.0] - 2026-07-08
+
+### Added
+- **Viewer (read-only) pools now reject control commands with a clear error** (Issue #133, follow-up) — an owner-side diagnostics dump (@Kal42) confirmed the sharing model: the owner is identified by `pool.owner` only, and `contracts[]` lists the other accounts with `accessLevel: "viewer"`. Every control entry point (switches, selects, numbers, times, climate, light, and the `set_schedule`/`clear_schedule`/`set_preset_schedule` services) now fails fast with a translated `pool_read_only` error on confirmed-viewer pools, instead of letting the cloud fake-accept the write (HTTP 200 that never persists). Owner/shared/unknown levels are untouched.
+- **Z250iQ heat pump promoted to the full Z260iQ feature set** (Issue #139, @Kal42) — a live register dump validated the complete Z260iQ layout on the Z250iQ (c0 running hours, c17 status, **c28 no-flow captured during a real no-flow**, c81/c82 setpoint bounds 7–40 °C), and the official app confirms the full Smart/Boost/Silence presets in both heating **and cooling**. The Z250iQ now gets the mode/preset select with cooling, the no-flow alarm on the climate entity, the running-hours sensor and the 7–40 °C setpoint bounds. Device identification is unchanged (LF* serial + z250/z25 name).
+
+## [2.47.0] - 2026-07-08
+
+### Added
+- **Blue Connect Gold battery voltage sensor** (Issue #138, @Kal42) — component 19 carries the probe's battery voltage in millivolts (samples 4116/4104 mV ≈ a near-full cell on this 3.6 V-nominal probe). Exposed as a diagnostic `voltage` sensor in mV.
+
+### Changed
+- **One status fetch per pool instead of one per device** (Issue #140 follow-up) — `poll_device_status` fetched the entire pool device tree once *per device*, i.e. N identical HTTP requests per poll cycle. The coordinator now fetches the tree once per pool and distributes the per-device statuses, cutting request volume and rate-limiting pressure (cf. Issue #63).
+- **HA 2026.6 deprecation fixed ahead of the 2026.12 enforcement** — the reauth and reconfigure flows no longer use `async_update_reload_and_abort` (deprecated when the integration also registers an entry update listener, as this one does for options changes). The flows now update the entry and schedule exactly one reload explicitly; behaviour is unchanged and the minimum supported HA version stays 2025.1.0.
+
+### Fixed
+- **Heat-pump entities no longer flip `unavailable` for a single poll cycle** (Issue #140, @edmondharty) — the Fluidra cloud heartbeat routinely misreports a healthy WiFi device (e.g. Z550iQ+) as disconnected for one poll, and the coordinator wrote that flag straight through, making every entity of the device unavailable for ~30 s several times a day. The offline transition is now debounced: a device is marked offline only after 2 consecutive offline reports, and recovers immediately on the first online one. Same unreliable flag already worked around for chlorinators in Issue #63.
+- **Active-schedule detection now follows the Home Assistant timezone** — the pump *schedules* sensor computed its `current_schedule_*` attributes from the host's naive local clock instead of `dt_util.now()` (used everywhere else). On systems where the OS timezone differs from the HA-configured one, the currently-active schedule window could be misreported.
+
+## [2.46.0] - 2026-07-05
+
+### Added
+- **Pool access-level awareness** (Issue #129 follow-up) — the integration now records whether the account **owns** a pool or only has **viewer** (read-only) access, exposed as the `access_level` / `read_only` attributes on the pool status sensor. A viewer account is a known trap: the Fluidra cloud accepts control writes (setpoints, switches) with an HTTP 200 that echoes the requested value but never persists it, so commands silently have no effect. When a pool is viewer-only, a clear warning is logged once at setup. (Control entities are intentionally left enabled — the permission model isn't fully known and owner accounts must keep working.)
+- **Air temperature sensor for the Z250iQ heat pump** (Issue #131, @Kal42) — the Z250iQ exposes the same air-temperature register (component 67, ×0.1) as the Z260iQ, confirmed against the official app. It now gets water and air temperature sensors like the Z260iQ, without otherwise changing its behaviour (it keeps its own on/off + preset handling — no Z260 mode/no-flow/running-hours).
+
+## [2.45.4] - 2026-07-05
+
+### Fixed
+- **AstralPool / Fluidra Energy Connect chlorinator `CC24018506`** (tecnoLC2, fw 40 — Issue #129, @luistf76). The unit fell back to the generic profile, which read c172 (water temperature, 31.5 °C) as pH and c177 (raw, uncalibrated ORP) as ORP — ~72 mV higher than the app. Dedicated profile validated register-by-register against the Fluidra app: **calibrated ORP on c170**, temperature c172, pH/ORP setpoints c16/c20, legacy chlorination c4/c164. The unit exposes no live pH-measured component (c8 only echoes the pH setpoint) and no live salinity (c185 stays 0), so those misleading sensors are no longer created, and the mode select is skipped (c20 is the ORP setpoint, not a mode register).
+- **Impossible-zero guard extended to pH and salinity** (Issue #129) — a pH or salinity reading of exactly 0 (a setpoint-echo register clearing to 0, or a frozen salinity slot) now shows *unknown* instead of a physically-impossible 0.0, mirroring the existing ORP guard (Issue #111).
+
+## [2.45.3] - 2026-07-04
+
+### Changed
+- **Region limitation documented** (Issue #91) — the integration only supports myFluidra / Fluidra Connect accounts registered in the **EMEA** region (Europe). Accounts from other regions (North America, Australia/APAC) use a different Fluidra backend and are rejected with an "invalid credentials" error even though the same login works in the official app. The config-flow login screen now states this upfront, the `invalid_auth` error mentions it as a possible cause, and the README has a dedicated note.
+
+## [2.45.2] - 2026-07-03
+
+### Fixed
+- **Zodiac Ei2 iQ 20 pH Evo chlorinator `CC26010842`** (Issue #104, @terminator1992) — the unit fell back to the legacy generic profile, which read the water temperature (c172 = 289 → 28.9 °C) as pH *and* as the pH-setpoint read-back (pH stuck mirroring the setpoint), left salinity/temperature at 0 and exposed a non-working mode select. Dedicated pH-only tecnoLC2 profile: pH (c165), temperature (c172), salinity (c174), pH setpoint (c16), chlorination level (c10) — no ORP entities (no probe, c20 is null on this unit). The scan also polls the candidate CLE/COU production registers (c9/c13/c14/c103/c154) like the sibling Ei2 iQ Evo profile.
+
+## [2.45.1] - 2026-07-02
+
+### Fixed
+- **Ducere 21 chlorinator `LC24008202`** (Issue #125, @onslope) — the unit fell back to the generic profile, which read the water temperature (c172) as pH. Dedicated tecnoLC2 profile (mapping supplied and validated by the reporter): pH (c165), ORP (c170), temperature (c172), salinity (c174), free chlorine (c178, probe-dependent), pH/ORP setpoints (c16/c20), boost (c103) and the cell-production register (c154) feeding the *producing* binary sensor.
+
+## [2.45.0] - 2026-07-02
+
+### Added
+- **`connection_error` repair issue is now actually raised** — after 3 consecutive failed poll cycles (including "every pool failed to refresh" outages where entities keep their previous data), and cleared automatically on the next successful cycle. The repairs feature was previously dead code.
+- **Firmware version on device pages** — `DeviceInfo.sw_version` is populated from the reported firmware and mirrored into the device registry after each successful refresh.
+- Field-level help texts (`data_description`) for the login form and the `scan_interval` option, in all 5 languages.
+- `ARCHITECTURE.md` developer documentation and a `[tool.coverage]` config so a plain `pytest --cov` reproduces the CI gate locally.
+
+### Changed
+- **Availability no longer defaults to offline** — entities are unavailable only when the coordinator fails, the device disappears from the cloud data, or the cloud *explicitly* reports it offline. Previously, missing connectivity info (first poll after startup, statuses without `connectivity.connected`, discovery entries without a connection type) read as offline: entities were unavailable for up to one scan interval after every restart, and some devices stayed unavailable forever.
+- **Light effect select** now keeps its optimistic value until the backend confirms it (or 10 s expire) instead of snapping back between the write and the next poll; a rejected command raises `light_set_failed`. The chlorinator mode select also raises on rejection instead of silently reverting.
+- **`control_status` attribute of the pump speed select** now uses the stable tokens `auto`/`manual` instead of hardcoded French sentences (attribute values are not translatable; update your automations if they matched the old strings).
+- **Pump speed select stays readable in auto mode** — it previously flipped to *Unavailable* whenever auto mode drove the pump. It now keeps reporting the effective speed (derived from schedules) with the `mdi:autorenew` icon; a manual change while auto mode is active raises a clear "disable auto mode first" error instead of a greyed-out control.
+- **Uniform error feedback on every control entity** — pump/auto-mode/schedule switches, chlorinator schedule-speed select and all number entities now raise a translated `HomeAssistantError` when the Fluidra API fails or rejects a command (several of them previously failed silently).
+- Options flow modernized: `NumberSelector` for `scan_interval`, zero-arg `OptionsFlow` pattern.
+- Auth client hardening: the token-refresh call now sends the app `User-Agent` (it was the only Cognito call without it), and parallel 401s no longer trigger duplicate Cognito refreshes (double-checked locking).
+- The 23 strictly-identical tecnoLC2 chlorinator profiles are generated by a factory (registry content proven byte-identical; adding a new model is now a 5-line change).
+- HACS minimum Home Assistant raised to 2025.1.0 — the integration uses 2024.11+ config-flow APIs that would crash on the previously advertised 2024.4 floor.
+- README: Quality Scale badge finally says Platinum (true since v2.43.0); Gre HPGIC and Blue Connect Gold added to the supported devices list.
+
+### Fixed
+- Running-hours sensor now has `device_class: duration`; ORP entities use the typed millivolt unit.
+- The devcontainer referenced a `requirements_dev.txt` that never existed (failure silently masked) — it now installs `requirements_test.txt`.
+
+### Removed
+- Dead code swept across the integration: 5 unused API client methods, the never-raised `FluidraRateLimitError`, the never-consumed `id_token` storage, ~24 unused constants, the never-read `skip_ph_orp`/`mode_control` feature flags, and the `offline_device`/`firmware_update` repair helpers that could never fire.
+
+## [2.44.2] - 2026-07-01
+
+### Fixed
+- **AstralPool Clear Connect chlorinator `CC25011632`** (Issue #123, @josgaming) — the unit fell back to the generic profile whose legacy layout both mis-read the sensors (c172 = 263 shown as pH 2.63 instead of 26.3 °C) and shared component IDs between setpoint read-back and measurement (pH setpoint and pH sensor both on c172, ORP both on c177), so moving the "Consigne pH/ORP" slider overwrote the measured pH/ORP values. Added a dedicated tecnoLC2 profile with setpoints on c16/c20 — distinct from the c165/c170 measurements — so the collision is gone and pH (c165), ORP (c170), temperature (c172) and salinity (c174) read correctly.
+
+## [2.44.1] - 2026-06-30
+
+### Fixed
+- **AstralPool Energy Connect chlorinator `CC25017029`** (Issue #121, @luiscosta1979) — the unit fell back to the generic profile, which read the water temperature (c172 = 254) as pH (2.54 instead of 25.4 °C, confirmed by the API `status_data.waterTemperature`) and left the temperature entity at 0 (generic c183 reads 0). Added to the Energy Connect tecnoLC2 profile so pH (c165), ORP (c170), temperature (c172) and salinity (c174) all match the Fluidra app.
+
+## [2.44.0] - 2026-06-30
+
+### Added
+- **Chlorinator "Producing" binary sensor** (Issue #109, @christian123125) — a new `binary_sensor.chlorinator_producing` reports whether the cell is actively producing chlorine. A resting/producing capture pair on the Clear Connect Evo 12 (`CC25019224`/`CC25009932`) confirmed component 154 is the real production register: it flips 0 (idle) → 100 (producing) with the ORP hysteresis, while the configured chlorination level (c10) stays at 100 %. Exposed with the `running` device class so it overlays cleanly on ORP history graphs.
+
+## [2.43.6] - 2026-06-30
+
+### Changed
+- **Zodiac Ei2 iQ Evo component scan widened** (Issue #104, @crdo78) — the `cc25102423` Evo profile now also scans c9/c13/c14/c103/c154 to locate the production-mode registers. This layout has no 0/1/2 Auto/Manual/Off selector (c20 is the ORP setpoint, 750 mV); production is driven by two binary mainboard features — CLE (External Chlorine Control, a remote on/off) and COU/COV (Pool Cover, low-production mode) — which weren't polled until now. They need to appear in a fresh capture pair (toggled once ON, once OFF) before they can be mapped as binary sensors/switches. No new entity yet.
+
+## [2.43.5] - 2026-06-29
+
+### Changed
+- **Clear Connect 12 component scan widened** (Issue #109, @christian123125) — the `CC25019224`/`CC25009932` profile now also scans c9/c103/c154 to locate the cell production-state register for a future `binary_sensor`. The resting/producing diagnostics showed no on/off flip among the currently-mapped components (c10 only ranges 50→100), so the actual-production register — not polled until now — needs to appear in a fresh capture pair before the sensor can be mapped reliably. No new entity yet.
+
+### Fixed
+- **AstralPool Energy Connect chlorinator `CC25008731`** (Issue #117, @yannickuhrig1) — the unit fell back to the generic profile, which read the water temperature (c172) as pH (2.88 instead of 28.8 °C) and left measured pH/ORP equal to their setpoints. Added to the Energy Connect tecnoLC2 profile so pH (c165), ORP (c170, calibrated), temperature (c172) and salinity (c174) all match the Fluidra app.
+- **Zodiac GenSalt OE iQ pH 12 Evo chlorinator** (Issue #116, @elefantomas) — the `CC26028741` unit fell back to the generic profile, which read the water temperature (c172) as pH (3.07 instead of 30.7 °C) and missed salinity/ORP. Added to the GenSalt OE iQ profile so pH (c165), ORP (c170), temperature (c172) and salinity (c174) all match the Fluidra app.
+
+## [2.43.4] - 2026-06-29
+
+### Fixed
+- **Zodiac eXO iQ LS ORP always 0** (Issue #111, @felisida) — the eXO iQ LS ships without an ORP probe (an optional Dual Link add-on), so component 63 stays a flat `0`. An immersed redox probe never reads exactly 0 mV, so the ORP sensor now reports "unknown" instead of a misleading `0 mV`, and surfaces a real value automatically if a probe is added later. pH, temperature and salinity are unaffected.
+
+## [2.43.3] - 2026-06-27
+
+### Fixed
+- **Zodiac Ei2 iQ Evo chlorinator** (Issue #104, @crdo78) — the `CC25021136` Evo unit fell back to the generic profile, leaving pH and ORP "Unavailable". Added to the tecnoLC2 Evo profile so pH (c165), ORP (c170), temperature (c172) and salinity (c174) all read correctly.
+
+## [2.43.2] - 2026-06-24
+
+### Fixed
+- **Editing a pump schedule from its entity page** (time / switch / select) no longer fails with `OVERLAP in sched` (Issue #105, @ihadx) — the schedule write no longer pads pump schedules to 8 slots with identical placeholder windows; it now sends only the configured schedules, matching the `fluidra_pool.set_schedule` service and the official app.
+
+## [2.43.1] - 2026-06-24
+
+### Added
+- **Gre HPGIC heat pump** (Issue #92, @sterubbg) — dedicated device profile so it's recognised on its own instead of matching the LG Eco Elyo by serial coincidence (its cloud serial is LG-prefixed). ON/OFF, mode and target temperature read from the correct components, and the component scan is widened to surface the remaining sensors.
+
+## [2.43.0] - 2026-06-24
+
+### Added
+- **Dynamic device discovery (`dynamic-devices`)** — pool devices added in the Fluidra app now appear in Home Assistant automatically on the next poll, with no reload required. Every platform (sensor, switch, select, number, time, climate, light) wires up newly-discovered devices through a coordinator listener.
+
+### Changed
+- **Reached Platinum quality scale** — with `dynamic-devices` and `stale-devices` now done (and `strict-typing` already enforced), the integration meets every Bronze→Platinum rule; `quality_scale` is bumped to `platinum`.
+- **Safer stale-device cleanup (`stale-devices`)** — a removed device is purged from the registry only after it has been absent from several consecutive successful polls, so a transient partial cloud response can no longer wipe devices, entities and their history on a single hiccup.
+- **Platinum `strict-typing`** — the integration passes `mypy --strict` (120 type issues resolved across 29 modules); CI enforces it via `[tool.mypy] strict = true`. Type annotations only; no runtime behaviour change.
+- Test/CI stack updated to Python 3.14 and Home Assistant 2026.6.x.
+- **Test coverage raised 94% → 97%** (1171 → 1268 tests); every module is ≥ 90%.
+- Declared an explicit config-entry-only `CONFIG_SCHEMA`, silencing the hassfest configuration-schema warning.
+
+### Fixed
+- **Chlorinator `LC25024524` read wrong sensor values** (Issue #73, @Ausstriken) — this tecnoLC2 unit fell back to the generic profile, which read component 172 (water temperature) as pH (÷100 → 3.16). A dedicated profile now reads pH (c165), ORP (c170), temperature (c172) and salinity (c174) correctly — confirmed against the Fluidra app.
+
+## [2.42.2] - 2026-06-19
+
+### Fixed
+- **`fluidra_pool.set_schedule` was always rejected by the Fluidra API** (Issue #89, thanks @ihadx) — the write payload didn't match the schema the official app uses. It now sends an integer `id`/`groupId` per slot and a single `startActions.operationName`, and drops the `componentToChange`, `endActions` and `state` fields the API rejected (server-side "invalid scheduleUser"). A rejected schedule write is now logged at WARNING with the HTTP status and response body, so the reason is visible in the system log by default.
+
+## [2.42.1] - 2026-06-16
+
+### Fixed
+- **Irripool iSalt** second serial (`LC24009805`, Issue #73) — this unit reports as `LC24009805` (not `LC24013306`), so it fell back to the generic profile: it read the water temperature (c172) as pH and the temperature from c183 (= 0 °C). Added to the Irripool iSALT tecnoLC2 profile so temperature, pH, ORP, salinity and the setpoints read from the correct components.
+
+## [2.42.0] - 2026-06-15
+
+### Added
+- **Z550iQ+ running-hours sensor** (Issue #88) — total running hours are now exposed as a sensor, read from component 60 (matches `status.totalRunningHours`).
+
+### Fixed
+- **Z550iQ+ no-flow now reads as IDLE, not OFF** (Issue #88) — when the heat pump is powered but circulation is blocked (component 61 = 11, typically an external pump is off), the climate entity reports `idle` with an explicit `no_flow` attribute instead of looking switched off.
+- **Z550iQ+ preset writes no longer fail** (Issues #56, #88) — component 17 is a read-only status (its values don't match a silence/smart/boost scheme and writes return HTTP 403), so the climate entity no longer offers or writes presets for this unit. The water-flow component (18) is exposed as a diagnostic attribute pending value confirmation.
+
+## [2.41.2] - 2026-06-15
+
+### Fixed
+- **Irrijardin iSalt chlorinator** (`LC24004804`, Issue #87) — added a dedicated tecnoLC2 profile (chlorination c10, pH setpoint c16, pH c165, temperature c172, salinity c174, ORP c170, boost c103) so it stops falling back to the generic config (which read the water temperature as pH). Same iSalt OEM cell as the Irripool iSALT; mapping verified by the reporter.
+
+## [2.41.1] - 2026-06-15
+
+### Fixed
+- **AstralPool Energy Connect** second serial (`CC25010924`, Issue #85) — added to the existing Energy Connect tecnoLC2 profile so this pH + ORP unit stops falling back to the generic config (same model as `CC24047102`).
+
+## [2.41.0] - 2026-06-15
+
+### Added
+- **AstralPool Energy Connect** (`CC24047102`, Issue #85) — dedicated tecnoLC2 profile (pH c165, ORP c170, temperature c172, salinity c174, chlorination c10, pH/ORP setpoints c16/c20, boost c103), validated by @Goetz67 against the Fluidra app with the pump running. The generic profile was reading the water temperature (c172) as pH.
+
+### Fixed
+- **Zodiac Ei2 iQ chlorinator** (`CC25016001`, Issue #84) — pump-running diagnostics showed the v2.40.9 mapping was wrong (c185 stayed 0 while the app showed salinity, c4 stayed 70 while the app showed 60 % chlorination) and that the narrowed component scan stopped fetching the relevant components. Salinity is now read from c174 and chlorination from c10 (standard tecnoLC2), temperature stays on the confirmed c172, and the scan is widened again.
+
+## [2.40.9] - 2026-06-14
+
+### Fixed
+- **Zodiac Ei2 iQ chlorinator** (`CC25016001`, Issue #84) — this salt-only tecnoLC2 unit was falling back to the generic legacy profile, which read chlorination from c164 (0 instead of the real 70 % on c4) and exposed phantom pH / ORP / free-chlorine sensors (the pH was the water temperature, c172 = 28.9 °C, read as pH 2.89). It now maps to a dedicated profile: chlorination level on c4, water temperature on c172, salinity on c185, and no pH / ORP / free-chlorine sensors, setpoints, boost or mode controls. The salinity component and write path will be confirmed from a pump-running capture.
+
+## [2.40.8] - 2026-06-13
+
+### Fixed
+- **KLINWASS chlorinator** (`LC24009904`, Issue #82, PR #83 by @Pep190272) — this tecnoLC2 unit was falling back to the generic legacy profile, which read the water temperature as pH (4.27) and mapped each sensor to its own setpoint (sensor == setpoint). It now maps to a dedicated tecnoLC2 profile (pH c165, ORP c170, temperature c172, salinity c174, chlorination c10) with distinct pH/ORP setpoints (c16 / c20).
+
 ## [2.40.7] - 2026-06-11
 
 ### Fixed

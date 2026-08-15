@@ -5,23 +5,49 @@ from __future__ import annotations
 import asyncio
 from datetime import time
 import logging
+from typing import TYPE_CHECKING
 
 import aiohttp
+from homeassistant.const import EntityCategory
 from homeassistant.exceptions import HomeAssistantError, ServiceValidationError
-from homeassistant.helpers.entity import EntityCategory
 
 from ..api_resilience import FluidraError
 from ..const import COMMAND_CONFIRMATION_DELAY, DOMAIN
-from ..utils import convert_cron_days
 from .base import FluidraScheduleTimeEntity
 
+if TYPE_CHECKING:
+    from ..coordinator import FluidraDataUpdateCoordinator
+    from ..fluidra_api import FluidraPoolAPI
+
 _LOGGER = logging.getLogger(__name__)
+
+
+def _replace_cron_time(cron_time: str, new_time: time) -> str:
+    """Return ``cron_time`` with only its minute/hour replaced, days preserved.
+
+    The day field is copied verbatim — it came straight from the API in the API's
+    own numbering, so rewriting it (e.g. a 0→7 conversion) would shift the
+    configured days on every write (Issue #175).
+    """
+    parts = cron_time.split()
+    if len(parts) >= 5:
+        parts[0] = str(new_time.minute)
+        parts[1] = str(new_time.hour)
+        return " ".join(parts)
+    return f"{new_time.minute} {new_time.hour} * * 1,2,3,4,5,6,7"
 
 
 class FluidraScheduleStartTimeEntity(FluidraScheduleTimeEntity):
     """Time entity for schedule start time."""
 
-    def __init__(self, coordinator, api, pool_id: str, device_id: str, schedule_id: str):
+    def __init__(
+        self,
+        coordinator: FluidraDataUpdateCoordinator,
+        api: FluidraPoolAPI,
+        pool_id: str,
+        device_id: str,
+        schedule_id: str,
+    ) -> None:
         """Initialize the start time entity."""
         super().__init__(coordinator, api, pool_id, device_id, schedule_id, "start")
 
@@ -48,6 +74,7 @@ class FluidraScheduleStartTimeEntity(FluidraScheduleTimeEntity):
 
     async def async_set_value(self, value: time) -> None:
         """Set the start time using exact mobile app format."""
+        self._ensure_pool_writable()
         try:
             self._optimistic_value = value
             self.async_write_ha_state()
@@ -80,28 +107,9 @@ class FluidraScheduleStartTimeEntity(FluidraScheduleTimeEntity):
 
             updated_schedules = []
             for sched in current_schedules:
-                start_time = convert_cron_days(sched.get("startTime", ""))
-                end_time = convert_cron_days(sched.get("endTime", ""))
-
+                scheduler = dict(sched)
                 if str(sched.get("id")) == str(self._schedule_id):
-                    current_cron = sched.get("startTime", "")
-                    days = [1, 2, 3, 4, 5, 6, 7]  # Default to every day (mobile format).
-                    if current_cron:
-                        parts = current_cron.split()
-                        if len(parts) >= 5:
-                            try:
-                                old_days = [int(d) for d in parts[4].split(",")]
-                                days = []
-                                for day in old_days:
-                                    if day == 0:  # CRON Sunday 0 → mobile Sunday 7.
-                                        days.append(7)
-                                    else:
-                                        days.append(day)
-                                days = sorted(days)
-                            except (ValueError, TypeError):
-                                pass
-
-                    start_time = self._format_time_to_cron(value, days)
+                    scheduler["startTime"] = _replace_cron_time(sched.get("startTime", ""), value)
 
                 component_id = self._get_schedule_component()
 
@@ -111,38 +119,28 @@ class FluidraScheduleStartTimeEntity(FluidraScheduleTimeEntity):
                         "id": sched.get("id"),
                         "groupId": 1,
                         "enabled": True,
-                        "startTime": self._format_cron_time_chlorinator(start_time),
-                        "endTime": self._format_cron_time_chlorinator(end_time),
+                        "startTime": self._format_cron_time_chlorinator(scheduler["startTime"]),
+                        "endTime": self._format_cron_time_chlorinator(scheduler.get("endTime", "")),
                         "startActions": {"operationName": str(sched.get("startActions", {}).get("operationName", "1"))},
                     }
                 else:
-                    scheduler = {
-                        "id": sched.get("id"),
-                        "groupId": sched.get("id"),
-                        "enabled": sched.get("enabled", False),
-                        "startTime": start_time,
-                        "endTime": end_time,
-                        "startActions": {"operationName": str(sched.get("startActions", {}).get("operationName", "0"))},
-                    }
+                    # Copy the entry verbatim and touch only the time being edited,
+                    # so a schedule whose mode lives in componentActions (eXO iQ)
+                    # keeps it instead of being rebuilt as operationName (Issue #175).
+                    scheduler.setdefault("groupId", sched.get("id"))
+                    scheduler["startTime"] = scheduler.get("startTime", "")
+                    scheduler["endTime"] = scheduler.get("endTime", "")
+                    # Read-only runtime fields the API rejects on write (Issue #89/#174).
+                    scheduler.pop("state", None)
+                    scheduler.pop("endActions", None)
                 updated_schedules.append(scheduler)
 
             component_id = self._get_schedule_component()
 
-            # Pumps expect exactly 8 schedulers — pad with safe defaults.
-            if component_id == 20:
-                while len(updated_schedules) < 8:
-                    missing_id = len(updated_schedules) + 1
-                    updated_schedules.append(
-                        {
-                            "id": missing_id,
-                            "groupId": missing_id,
-                            "enabled": False,
-                            "startTime": "00 00 * * 1,2,3,4,5,6,7",
-                            "endTime": "00 01 * * 1,2,3,4,5,6,7",
-                            "startActions": {"operationName": "0"},
-                        }
-                    )
-
+            # Send only the configured schedules — no padding. Fluidra fills the
+            # remaining device slots itself; padding to 8 with identical placeholder
+            # windows is rejected as "OVERLAP in sched" (Issue #105), and a packet
+            # capture of the official app confirms it sends only the real entries.
             success = await self._api.set_schedule(self._device_id, updated_schedules, component_id=component_id)
             if not success:
                 self._optimistic_value = None
@@ -183,7 +181,14 @@ class FluidraScheduleStartTimeEntity(FluidraScheduleTimeEntity):
 class FluidraScheduleEndTimeEntity(FluidraScheduleTimeEntity):
     """Time entity for schedule end time."""
 
-    def __init__(self, coordinator, api, pool_id: str, device_id: str, schedule_id: str):
+    def __init__(
+        self,
+        coordinator: FluidraDataUpdateCoordinator,
+        api: FluidraPoolAPI,
+        pool_id: str,
+        device_id: str,
+        schedule_id: str,
+    ) -> None:
         """Initialize the end time entity."""
         super().__init__(coordinator, api, pool_id, device_id, schedule_id, "end")
 
@@ -210,6 +215,7 @@ class FluidraScheduleEndTimeEntity(FluidraScheduleTimeEntity):
 
     async def async_set_value(self, value: time) -> None:
         """Set the end time using exact mobile app format."""
+        self._ensure_pool_writable()
         try:
             self._optimistic_value = value
             self.async_write_ha_state()
@@ -239,67 +245,35 @@ class FluidraScheduleEndTimeEntity(FluidraScheduleTimeEntity):
 
             updated_schedules = []
             for sched in current_schedules:
-                start_time = convert_cron_days(sched.get("startTime", ""))
-                end_time = convert_cron_days(sched.get("endTime", ""))
-
+                scheduler = dict(sched)
                 if str(sched.get("id")) == str(self._schedule_id):
-                    current_cron = sched.get("endTime", "")
-                    days = [1, 2, 3, 4, 5, 6, 7]
-                    if current_cron:
-                        parts = current_cron.split()
-                        if len(parts) >= 5:
-                            try:
-                                old_days = [int(d) for d in parts[4].split(",")]
-                                days = []
-                                for day in old_days:
-                                    if day == 0:
-                                        days.append(7)
-                                    else:
-                                        days.append(day)
-                                days = sorted(days)
-                            except (ValueError, TypeError):
-                                pass
-
-                    end_time = self._format_time_to_cron(value, days)
+                    scheduler["endTime"] = _replace_cron_time(sched.get("endTime", ""), value)
 
                 component_id = self._get_schedule_component()
 
                 if component_id == 258:
+                    # DM24049704 chlorinator uses a flat groupId=1 + padded CRON.
                     scheduler = {
                         "id": sched.get("id"),
                         "groupId": 1,
                         "enabled": True,
-                        "startTime": self._format_cron_time_chlorinator(start_time),
-                        "endTime": self._format_cron_time_chlorinator(end_time),
+                        "startTime": self._format_cron_time_chlorinator(scheduler.get("startTime", "")),
+                        "endTime": self._format_cron_time_chlorinator(scheduler["endTime"]),
                         "startActions": {"operationName": str(sched.get("startActions", {}).get("operationName", "1"))},
                     }
                 else:
-                    scheduler = {
-                        "id": sched.get("id"),
-                        "groupId": sched.get("id"),
-                        "enabled": sched.get("enabled", False),
-                        "startTime": start_time,
-                        "endTime": end_time,
-                        "startActions": {"operationName": str(sched.get("startActions", {}).get("operationName", "0"))},
-                    }
+                    # Copy the entry verbatim and touch only the time being edited
+                    # (see the start-time entity; Issue #175).
+                    scheduler.setdefault("groupId", sched.get("id"))
+                    scheduler["startTime"] = scheduler.get("startTime", "")
+                    scheduler["endTime"] = scheduler.get("endTime", "")
+                    scheduler.pop("state", None)
+                    scheduler.pop("endActions", None)
                 updated_schedules.append(scheduler)
 
             component_id = self._get_schedule_component()
 
-            if component_id == 20:
-                while len(updated_schedules) < 8:
-                    missing_id = len(updated_schedules) + 1
-                    updated_schedules.append(
-                        {
-                            "id": missing_id,
-                            "groupId": missing_id,
-                            "enabled": False,
-                            "startTime": "00 00 * * 1,2,3,4,5,6,7",
-                            "endTime": "00 01 * * 1,2,3,4,5,6,7",
-                            "startActions": {"operationName": "0"},
-                        }
-                    )
-
+            # No padding — see the OVERLAP-in-sched note in the slot editor above (Issue #105).
             success = await self._api.set_schedule(self._device_id, updated_schedules, component_id=component_id)
             if not success:
                 self._optimistic_value = None

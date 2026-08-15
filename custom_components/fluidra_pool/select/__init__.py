@@ -2,15 +2,22 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from homeassistant.components.select import SelectEntity
 
-from ..const import FluidraPoolConfigEntry
+from ..const import (
+    DEVICE_TYPE_CHLORINATOR,
+    DEVICE_TYPE_LIGHT,
+    DEVICE_TYPE_PUMP,
+    FluidraPoolConfigEntry,
+)
 from ..device_registry import DeviceIdentifier
+from ..platform_setup import async_setup_dynamic_platform
+from .aux import FluidraAuxOutputSelect
 from .chlorinator import FluidraChlorinatorModeSelect
 from .light import FluidraLightEffectSelect
-from .pump import FluidraPumpSpeedSelect
+from .pump import FluidraPumpSpeedSelect, FluidraVictoriaQuickFunctionSelect
 from .schedule import FluidraChlorinatorScheduleSpeedSelect, FluidraScheduleModeSelect
 
 if TYPE_CHECKING:
@@ -18,11 +25,13 @@ if TYPE_CHECKING:
     from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
 __all__ = [
+    "FluidraAuxOutputSelect",
     "FluidraChlorinatorModeSelect",
     "FluidraChlorinatorScheduleSpeedSelect",
     "FluidraLightEffectSelect",
     "FluidraPumpSpeedSelect",
     "FluidraScheduleModeSelect",
+    "FluidraVictoriaQuickFunctionSelect",
     "async_setup_entry",
 ]
 
@@ -34,73 +43,82 @@ async def async_setup_entry(
     config_entry: FluidraPoolConfigEntry,
     async_add_entities: AddEntitiesCallback,
 ) -> None:
-    """Set up the Fluidra Pool select entities."""
+    """Set up Fluidra Pool select entities, including devices added later."""
     coordinator = config_entry.runtime_data.coordinator
 
-    entities: list[SelectEntity] = []
+    def _build(pool_id: str, device: dict[str, Any]) -> list[SelectEntity]:
+        """Create select entities for one device."""
+        entities: list[SelectEntity] = []
+        device_id = device["device_id"]
+        config = DeviceIdentifier.identify_device(device)
+        device_type = config.device_type if config else device.get("type", "")
 
-    # Use cached pools data instead of API call for faster startup
-    pools = coordinator.api.cached_pools or await coordinator.api.get_pools()
-    for pool in pools:
-        for device in pool["devices"]:
-            device_id = device.get("device_id")
-            config = DeviceIdentifier.identify_device(device)
-            device_type = config.device_type if config else device.get("type", "")
+        # Chlorinator mode select (OFF/ON/AUTO) — skip for variants without mode select (e.g. CC24033907).
+        if device_type == DEVICE_TYPE_CHLORINATOR:
+            skip_mode = DeviceIdentifier.has_feature(device, "skip_mode_select")
+            if not skip_mode:
+                entities.append(FluidraChlorinatorModeSelect(coordinator, coordinator.api, pool_id, device_id))
 
-            if not device_id:
-                continue
-
-            # Chlorinator mode select (OFF/ON/AUTO) — skip for variants without mode select (e.g. CC24033907).
-            if device_type == "chlorinator":
-                skip_mode = DeviceIdentifier.has_feature(device, "skip_mode_select")
-                if not skip_mode:
-                    entities.append(FluidraChlorinatorModeSelect(coordinator, coordinator.api, pool["id"], device_id))
-
-            # Heat pumps don't expose speed or schedule controls.
-            if DeviceIdentifier.has_feature(device, "skip_schedules"):
-                continue
-
-            if (
-                device_type == "pump"
-                and DeviceIdentifier.should_create_entity(device, "select")
-                and device.get("variable_speed")
-            ):
-                entities.append(FluidraPumpSpeedSelect(coordinator, coordinator.api, pool["id"], device_id))
-
-            if (
-                device_type == "pump"
-                and DeviceIdentifier.should_create_entity(device, "select")
-                and device.get("schedule_data")
-            ):
-                # Pumps expose 8 schedule slots.
-                for schedule_id in ["1", "2", "3", "4", "5", "6", "7", "8"]:
-                    entities.append(
-                        FluidraScheduleModeSelect(
-                            coordinator,
-                            coordinator.api,
-                            pool["id"],
-                            device_id,
-                            schedule_id,
-                        )
+            # Auxiliary outputs (OFF/ON/AUTO), for units that expose them.
+            for aux_number, component in sorted(DeviceIdentifier.get_feature(device, "aux_outputs", {}).items()):
+                entities.append(
+                    FluidraAuxOutputSelect(
+                        coordinator, coordinator.api, pool_id, device_id, str(aux_number), int(component)
                     )
+                )
 
-            if device_type == "light":
-                effect_component = DeviceIdentifier.get_feature(device, "effect_select")
-                if effect_component:
-                    entities.append(FluidraLightEffectSelect(coordinator, coordinator.api, pool["id"], device_id))
+        # Heat pumps don't expose speed or schedule controls.
+        if DeviceIdentifier.has_feature(device, "skip_schedules"):
+            return entities
 
-            if device_type == "chlorinator" and DeviceIdentifier.has_feature(device, "schedule_component"):
-                schedule_count = DeviceIdentifier.get_feature(device, "schedule_count", 3)
-                for i in range(1, schedule_count + 1):
-                    schedule_id = str(i)
-                    entities.append(
-                        FluidraChlorinatorScheduleSpeedSelect(
-                            coordinator,
-                            coordinator.api,
-                            pool["id"],
-                            device_id,
-                            schedule_id,
-                        )
+        if (
+            device_type == DEVICE_TYPE_PUMP
+            and DeviceIdentifier.should_create_entity(device, "select")
+            and device.get("variable_speed")
+        ):
+            entities.append(FluidraPumpSpeedSelect(coordinator, coordinator.api, pool_id, device_id))
+
+        # Victoria quick functions: options are read live from the pump's preset
+        # slots, so the entity exists whenever the profile declares it (Issue #144).
+        if DeviceIdentifier.should_create_entity(device, "select_quick_function"):
+            entities.append(FluidraVictoriaQuickFunctionSelect(coordinator, coordinator.api, pool_id, device_id))
+
+        if (
+            device_type == DEVICE_TYPE_PUMP
+            and DeviceIdentifier.should_create_entity(device, "select")
+            and device.get("schedule_data")
+        ):
+            # Pumps expose 8 schedule slots.
+            for schedule_id in ["1", "2", "3", "4", "5", "6", "7", "8"]:
+                entities.append(
+                    FluidraScheduleModeSelect(
+                        coordinator,
+                        coordinator.api,
+                        pool_id,
+                        device_id,
+                        schedule_id,
                     )
+                )
 
-    async_add_entities(entities)
+        if device_type == DEVICE_TYPE_LIGHT:
+            effect_component = DeviceIdentifier.get_feature(device, "effect_select")
+            if effect_component:
+                entities.append(FluidraLightEffectSelect(coordinator, coordinator.api, pool_id, device_id))
+
+        if device_type == DEVICE_TYPE_CHLORINATOR and DeviceIdentifier.has_feature(device, "schedule_component"):
+            schedule_count = DeviceIdentifier.get_feature(device, "schedule_count", 3)
+            for i in range(1, schedule_count + 1):
+                schedule_id = str(i)
+                entities.append(
+                    FluidraChlorinatorScheduleSpeedSelect(
+                        coordinator,
+                        coordinator.api,
+                        pool_id,
+                        device_id,
+                        schedule_id,
+                    )
+                )
+
+        return entities
+
+    await async_setup_dynamic_platform(config_entry, async_add_entities, _build)

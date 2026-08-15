@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from typing import Any
 from urllib.parse import quote
@@ -9,7 +10,7 @@ from urllib.parse import quote
 from ..api_resilience import FluidraAuthError, FluidraCircuitBreakerError, FluidraError
 from ..utils import mask_device_id
 from ._base import FluidraAPIBase
-from ._constants import FLUIDRA_EMEA_BASE
+from ._constants import DEVICES_ENDPOINT, FLUIDRA_EMEA_BASE, USER_POOLS_ENDPOINT
 from ._helpers import classify_device_type
 
 _LOGGER = logging.getLogger(__name__)
@@ -19,26 +20,35 @@ class DevicesMixin(FluidraAPIBase):
     """Pool & device discovery, caching, and polling."""
 
     async def async_update_data(self) -> None:
-        """Discover pools and devices for the account; atomic replacement at end."""
+        """Discover pools and devices for the account; atomic replacement at end.
+
+        Device discovery per pool runs concurrently: pools are independent
+        once the account's pool list is known, so a multi-pool account's boot
+        discovery drops from N sequential RTTs to one (this is on the HA boot
+        critical path via ``authenticate``). ``asyncio.gather`` keeps the
+        result order aligned with the pool list.
+        """
         headers = self._build_auth_headers()
-        pools_url = f"{FLUIDRA_EMEA_BASE}/generic/users/me/pools"
 
         user_pools: list[dict[str, Any]] = []
         devices: list[dict[str, Any]] = []
 
         try:
-            status, data, _ = await self._request("GET", pools_url, headers=headers)
+            status, data, _ = await self._request("GET", USER_POOLS_ENDPOINT, headers=headers)
             if status == 200:
                 if isinstance(data, list):
                     user_pools = data
                 elif isinstance(data, dict):
                     user_pools = data.get("pools", [])
 
-                for pool in user_pools:
-                    pool_id = pool.get("id")
-                    if pool_id:
-                        pool_devices = await self._discover_devices_for_pool(pool_id, headers)
-                        devices.extend(pool_devices)
+                pool_ids: list[str] = [str(pool["id"]) for pool in user_pools if pool.get("id")]
+                discovery_results = await asyncio.gather(
+                    *(self._discover_devices_for_pool(pool_id, headers) for pool_id in pool_ids),
+                    return_exceptions=True,
+                )
+                for result in discovery_results:
+                    if isinstance(result, list):
+                        devices.extend(result)
         except FluidraError as err:
             _LOGGER.warning("Failed to update data: %s", err)
             return
@@ -48,11 +58,10 @@ class DevicesMixin(FluidraAPIBase):
 
     async def _discover_devices_for_pool(self, pool_id: str, headers: dict[str, str]) -> list[dict[str, Any]]:
         """Discover devices for a single pool. Returns newly-discovered devices only."""
-        devices_url = f"{FLUIDRA_EMEA_BASE}/generic/devices"
         params = {"poolId": pool_id, "format": "tree"}
 
         try:
-            status, devices_data, _ = await self._request("GET", devices_url, headers=headers, params=params)
+            status, devices_data, _ = await self._request("GET", DEVICES_ENDPOINT, headers=headers, params=params)
             if status != 200:
                 return []
         except FluidraError as err:
@@ -118,7 +127,9 @@ class DevicesMixin(FluidraAPIBase):
                                 "connection_type": child_connection_type,
                                 "model": child_device_name,
                                 "manufacturer": "Fluidra",
-                                "online": child_connection_type == "connected",
+                                # Connection type is only trustworthy when explicit; anything else
+                                # is unknown (None) so it does not read as offline.
+                                "online": {"connected": True, "disconnected": False}.get(child_connection_type),
                                 "is_running": False,
                                 "auto_mode_enabled": False,
                                 "operation_mode": 0,
@@ -143,7 +154,8 @@ class DevicesMixin(FluidraAPIBase):
                     "connection_type": connection_type,
                     "model": device_name,
                     "manufacturer": "Fluidra",
-                    "online": connection_type == "connected",
+                    # See above: explicit values only, unknown stays None.
+                    "online": {"connected": True, "disconnected": False}.get(connection_type),
                     "is_running": False,
                     "auto_mode_enabled": False,
                     "operation_mode": 0,
@@ -178,23 +190,23 @@ class DevicesMixin(FluidraAPIBase):
         """Return cached pools without an API call."""
         return self._pools
 
-    def get_pool_by_id(self, pool_id: str) -> dict[str, Any] | None:
-        """Return a specific pool by ID."""
-        for pool in self._pools:
-            if pool["id"] == pool_id:
-                return pool
-        return None
-
     def get_device_by_id(self, device_id: str) -> dict[str, Any] | None:
         """Return a specific device by ID across all pools."""
         for pool in self._pools:
-            for device in pool["devices"]:
+            devices: list[dict[str, Any]] = pool["devices"]
+            for device in devices:
                 if device.get("device_id") == device_id:
                     return device
         return None
 
-    async def poll_device_status(self, pool_id: str, device_id: str) -> dict[str, Any] | None:
-        """Poll device state from the Fluidra API."""
+    async def poll_pool_device_statuses(self, pool_id: str) -> dict[str, dict[str, Any]] | None:
+        """Fetch the pool device tree once and return statuses keyed by device id.
+
+        The tree endpoint returns every device (and bridged children) of the
+        pool in a single response, so polling it once per pool replaces one
+        identical GET per device (Issue #140). Returns ``None`` when the fetch
+        failed — callers keep the previous per-device data.
+        """
         if not self.access_token:
             raise FluidraAuthError("Not authenticated")
 
@@ -202,16 +214,15 @@ class DevicesMixin(FluidraAPIBase):
             raise FluidraAuthError("Token refresh failed")
 
         headers = self._build_auth_headers()
-        url = f"{FLUIDRA_EMEA_BASE}/generic/devices"
         params = {"poolId": pool_id, "format": "tree"}
 
         try:
-            status, data, _ = await self._request("GET", url, headers=headers, params=params)
+            status, data, _ = await self._request("GET", DEVICES_ENDPOINT, headers=headers, params=params)
         except FluidraCircuitBreakerError:
-            _LOGGER.debug("Circuit breaker open, skipping poll for device %s", mask_device_id(device_id))
+            _LOGGER.debug("Circuit breaker open, skipping status poll for pool %s", pool_id)
             return None
         except FluidraError as err:
-            _LOGGER.debug("Poll device status failed: %s", err)
+            _LOGGER.debug("Poll pool device statuses failed: %s", err)
             return None
 
         if status != 200:
@@ -223,15 +234,32 @@ class DevicesMixin(FluidraAPIBase):
         if not isinstance(data, list):
             return None
 
-        for device in data:
-            if device.get("id") == device_id:
-                return device
+        statuses: dict[str, dict[str, Any]] = {}
+        device_list: list[dict[str, Any]] = data
+        for device in device_list:
+            if not isinstance(device, dict):
+                continue
+            if device.get("id") is not None:
+                statuses[device["id"]] = device
             children = device.get("devices")
             if isinstance(children, list):
-                for child in children:
-                    if child.get("id") == device_id:
-                        return child
-        return None
+                child_list: list[dict[str, Any]] = children
+                for child in child_list:
+                    if isinstance(child, dict) and child.get("id") is not None:
+                        statuses[child["id"]] = child
+        return statuses
+
+    async def poll_device_status(self, pool_id: str, device_id: str) -> dict[str, Any] | None:
+        """Poll a single device's state from the Fluidra API.
+
+        Fetches the whole pool tree — prefer :meth:`poll_pool_device_statuses`
+        when several devices of the same pool are needed.
+        """
+        statuses = await self.poll_pool_device_statuses(pool_id)
+        if statuses is None:
+            _LOGGER.debug("No status tree for device %s", mask_device_id(device_id))
+            return None
+        return statuses.get(device_id)
 
     async def poll_water_quality(self, pool_id: str) -> dict[str, Any] | None:
         """Poll water quality telemetry for a pool."""
@@ -283,24 +311,3 @@ class DevicesMixin(FluidraAPIBase):
             pass
 
         return pool_data if pool_data else None
-
-    async def get_user_pools(self) -> list[dict[str, Any]] | None:
-        """Return the list of pools for the user."""
-        if not self.access_token:
-            raise FluidraAuthError("Not authenticated")
-
-        if not await self.ensure_valid_token():
-            raise FluidraAuthError("Token refresh failed")
-
-        headers = self._build_auth_headers()
-        url = f"{FLUIDRA_EMEA_BASE}/generic/users/me/pools"
-
-        try:
-            status, data, _ = await self._request("GET", url, headers=headers)
-        except FluidraError as err:
-            _LOGGER.debug("Get user pools failed: %s", err)
-            return None
-
-        if status == 200 and isinstance(data, list):
-            return data
-        return None

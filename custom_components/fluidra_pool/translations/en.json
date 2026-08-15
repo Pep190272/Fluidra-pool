@@ -7,7 +7,7 @@
     },
     "error": {
       "cannot_connect": "Unable to connect to Fluidra API",
-      "invalid_auth": "Invalid credentials. Check your email and password",
+      "invalid_auth": "Login failed. Check your email and password. If your account is registered outside the EMEA region (Europe), it is not currently supported.",
       "invalid_mfa_code": "Invalid or expired verification code. Please try again.",
       "no_pools": "No pools found. Make sure your equipment is configured in the Fluidra Pool app",
       "unknown": "Unexpected error"
@@ -41,12 +41,44 @@
           "email": "Email",
           "password": "Password"
         },
-        "description": "Enter your Fluidra Pool credentials",
+        "data_description": {
+          "email": "The email address of your Fluidra Pool (iAquaLink) account.",
+          "password": "The password of your Fluidra Pool account."
+        },
+        "description": "Enter your Fluidra Pool (iAquaLink) account credentials.\n\n**Note:** only accounts registered in the EMEA region (Europe) are supported. Accounts from other regions (e.g. North America, Australia) use a different Fluidra backend and cannot connect here.",
         "title": "Fluidra Pool Configuration"
       }
     }
   },
   "entity": {
+    "binary_sensor": {
+      "air_temperature_alarm": {
+        "name": "Air temperature fault"
+      },
+      "chlorinator_alarm": {
+        "name": "Alarm"
+      },
+      "chlorinator_producing": {
+        "name": "Producing"
+      },
+      "no_flow_alarm": {
+        "name": "No flow fault"
+      },
+      "speed_input_high": {
+        "name": "High speed input"
+      },
+      "speed_input_low": {
+        "name": "Low speed input"
+      },
+      "speed_input_medium": {
+        "name": "Medium speed input"
+      }
+    },
+    "button": {
+      "pump_stop": {
+        "name": "Stop"
+      }
+    },
     "climate": {
       "heat_pump": {
         "name": "Heat Pump",
@@ -80,6 +112,9 @@
       "effect_speed": {
         "name": "Effect Speed"
       },
+      "heating_setpoint": {
+        "name": "Heating Setpoint"
+      },
       "orp_setpoint": {
         "name": "ORP Setpoint"
       },
@@ -88,6 +123,14 @@
       }
     },
     "select": {
+      "aux_output": {
+        "name": "Aux {number}",
+        "state": {
+          "auto": "Auto",
+          "off": "Off",
+          "on": "On"
+        }
+      },
       "chlorinator_mode": {
         "name": "Mode",
         "state": {
@@ -135,6 +178,9 @@
           "stopped": "Not Running"
         }
       },
+      "quick_function": {
+        "name": "Quick function"
+      },
       "schedule_mode": {
         "name": "Schedule {schedule_id} Mode",
         "state": {
@@ -148,11 +194,20 @@
       "air_temperature": {
         "name": "Air Temperature"
       },
+      "boost_remaining": {
+        "name": "Boost Remaining"
+      },
       "brightness": {
         "name": "Brightness"
       },
+      "chlorinator_battery_voltage": {
+        "name": "Battery Voltage"
+      },
       "chlorinator_chlorination_actual": {
         "name": "Chlorination Actual"
+      },
+      "chlorinator_conductivity": {
+        "name": "Conductivity"
       },
       "chlorinator_free_chlorine": {
         "name": "Free Chlorine"
@@ -168,6 +223,12 @@
       },
       "chlorinator_water_temperature": {
         "name": "Water Temperature"
+      },
+      "compressor_modulation": {
+        "name": "Compressor Modulation"
+      },
+      "compressor_running_hours": {
+        "name": "Compressor Running Hours"
       },
       "current_temperature": {
         "name": "Current Temperature"
@@ -198,6 +259,27 @@
           "winterized": "Winterized"
         }
       },
+      "pump_activity": {
+        "name": "Activity",
+        "state": {
+          "calibrating": "Calibrating",
+          "manual": "Running (manual)",
+          "priming": "Priming",
+          "running": "Running",
+          "scheduled": "Running (schedule)",
+          "stopped": "Stopped",
+          "unknown": "Unknown"
+        }
+      },
+      "pump_flow": {
+        "name": "Flow rate"
+      },
+      "pump_head": {
+        "name": "Head"
+      },
+      "pump_power": {
+        "name": "Power"
+      },
       "running_hours": {
         "name": "Running Hours"
       },
@@ -211,6 +293,7 @@
           "low": "Low",
           "medium": "Medium",
           "not_running": "Not Running",
+          "running": "Running",
           "stopped": "Stopped"
         }
       },
@@ -230,6 +313,9 @@
       },
       "weather_temperature": {
         "name": "Weather Temperature"
+      },
+      "wifi_signal": {
+        "name": "WiFi Signal"
       }
     },
     "switch": {
@@ -242,11 +328,17 @@
       "chlorinator": {
         "name": "Chlorinator"
       },
+      "freeze_protection": {
+        "name": "Freeze Protection"
+      },
       "heat_pump": {
         "name": "Heat Pump"
       },
       "heater": {
         "name": "Heater"
+      },
+      "low_mode": {
+        "name": "Low Mode"
       },
       "pump": {
         "name": "Pump"
@@ -273,6 +365,12 @@
   "exceptions": {
     "auth_failed": {
       "message": "Authentication failed, please re-authenticate"
+    },
+    "auto_mode_set_failed": {
+      "message": "Failed to change auto mode"
+    },
+    "aux_set_failed": {
+      "message": "Failed to set the auxiliary output"
     },
     "boost_set_failed": {
       "message": "Failed to set boost mode"
@@ -301,6 +399,9 @@
     "hvac_mode_set_failed": {
       "message": "Failed to set heat-pump mode to {hvac_mode}"
     },
+    "invalid_schedule_mode": {
+      "message": "Invalid schedule mode: {value}. This device expects a numeric mode."
+    },
     "invalid_time_format": {
       "message": "Invalid time {value}, expected HH:MM"
     },
@@ -316,6 +417,9 @@
     "number_set_failed": {
       "message": "Failed to set the value on the device"
     },
+    "pool_read_only": {
+      "message": "The Fluidra account only has viewer (read-only) access to pool {pool_name} — the cloud accepts control commands but never applies them. Ask the pool owner for full access."
+    },
     "preset_mode_control_failed": {
       "message": "Preset mode control failed ({error_type})"
     },
@@ -328,8 +432,17 @@
     "preset_schedule_set_rejected": {
       "message": "Fluidra API rejected the preset schedule update for {device_id}"
     },
+    "pump_in_auto_mode": {
+      "message": "The speed level cannot be changed while auto mode is active. Disable auto mode first."
+    },
+    "pump_set_failed": {
+      "message": "Failed to control the pump"
+    },
     "pump_speed_set_failed": {
       "message": "Failed to set the pump speed"
+    },
+    "quick_function_unknown": {
+      "message": "Unknown quick function: {option}"
     },
     "schedule_clear_failed": {
       "message": "Fluidra API call failed while clearing the schedule for {device_id}"
@@ -346,6 +459,12 @@
     "schedule_set_rejected": {
       "message": "Fluidra API rejected the schedule update for {device_id}"
     },
+    "schedule_vs_pump_unsupported": {
+      "message": "Cannot write schedules to {device_id}: this device is configured with a variable-speed pump, whose schedule slots also carry a target pump speed that this service cannot set. Writing an incomplete slot makes the Fluidra app unable to load the device. Use the Fluidra app for variable-speed pump schedules."
+    },
+    "switch_set_failed": {
+      "message": "Failed to change the switch state"
+    },
     "temperature_out_of_range": {
       "message": "Temperature {temperature}°C is out of range ({min_temp}°C - {max_temp}°C)"
     },
@@ -361,13 +480,9 @@
       "description": "Unable to connect to Fluidra Pool service",
       "title": "Connection error"
     },
-    "firmware_update_available": {
-      "description": "Device {device} has firmware version {version} available",
-      "title": "Firmware update available"
-    },
-    "offline_device": {
-      "description": "Device {device} is offline",
-      "title": "Device offline"
+    "unverified_device_profile": {
+      "description": "This device was matched by a generic profile whose sensor mapping is a best guess — readings such as pH, ORP or temperature may be wrong. Please download the integration diagnostics and open a GitHub issue so an exact profile can be added for your model.",
+      "title": "Device profile not verified: {device_name}"
     }
   },
   "options": {
@@ -375,6 +490,9 @@
       "init": {
         "data": {
           "scan_interval": "Update interval (seconds)"
+        },
+        "data_description": {
+          "scan_interval": "How often Home Assistant polls the Fluidra cloud. Lower values give fresher data but more requests."
         },
         "description": "Configure advanced options",
         "title": "Fluidra Pool Options"

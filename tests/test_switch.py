@@ -6,6 +6,7 @@ from types import SimpleNamespace
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
+from homeassistant.exceptions import HomeAssistantError
 import pytest
 
 from custom_components.fluidra_pool.switch import (
@@ -13,6 +14,7 @@ from custom_components.fluidra_pool.switch import (
     FluidraHeaterSwitch,
     FluidraPumpSwitch,
     FluidraScheduleEnableSwitch,
+    async_setup_entry,
 )
 
 POOL_ID = "pool-1"
@@ -104,10 +106,11 @@ async def test_pump_turn_on_invokes_start_pump_and_refresh() -> None:
 
 
 async def test_pump_turn_on_clears_pending_state_on_api_failure() -> None:
-    """When the API returns False, the optimistic state is rolled back."""
+    """When the API returns False, the optimistic state is rolled back and HomeAssistantError raised."""
     pump = _pump_switch(api_failure=True) if False else _pump_switch()
     pump._api.start_pump = AsyncMock(return_value=False)
-    await pump.async_turn_on()
+    with pytest.raises(HomeAssistantError):
+        await pump.async_turn_on()
     assert pump._pending_state is None
 
 
@@ -273,13 +276,13 @@ async def test_schedule_switch_turn_on_sets_only_target_schedule_enabled() -> No
     switch = _schedule_switch(schedules)
     await switch.async_turn_on()
 
-    # Single PUT to the schedule component with the same 8-slot shape.
+    # Single PUT to the schedule component — only the configured slots, no padding.
     switch._api.set_schedule.assert_awaited_once()
     args, kwargs = switch._api.set_schedule.call_args
     assert args[0] == DEVICE_ID
     sent_schedules = args[1]
     assert kwargs["component_id"] == 20
-    assert len(sent_schedules) == 8  # padded to 8 for pump component 20
+    assert len(sent_schedules) == 4  # only the configured slots, no padding (Issue #105)
     # Only id=4 should now be enabled.
     enabled_ids = {s["id"] for s in sent_schedules if s["enabled"]}
     assert enabled_ids == {1, 4}
@@ -305,3 +308,112 @@ async def test_schedule_switch_turn_off_keeps_optimistic_until_server_confirms()
     assert switch._pending_state is False
     switch._api.set_schedule.assert_awaited_once()
     switch.coordinator.async_request_refresh.assert_awaited_once()
+
+
+# --- async_setup_entry: dynamic-devices ----------------------------------
+
+
+def _pinned_pump(device_id: str) -> dict:
+    """A device pinned to a pump config so the platform creates a FluidraPumpSwitch."""
+    return {
+        "device_id": device_id,
+        "name": "Pump",
+        "family": "",
+        "type": "",
+        "model": "",
+        "online": True,
+        "components": {},
+        "_identify_cache": {
+            "key": (device_id, "", "", "", ""),
+            "config": SimpleNamespace(
+                device_type="pump",
+                features={},
+                entities=["switch"],
+                components_range=25,
+                required_components=[0, 1, 2, 3],
+            ),
+        },
+    }
+
+
+async def test_setup_adds_new_device_dynamically() -> None:
+    """dynamic-devices: a device appearing on a later poll is wired without a reload."""
+    dev1 = _pinned_pump("dev1")
+    pool = {"id": POOL_ID, "name": "Pool", "devices": [dev1]}
+    coordinator = MagicMock()
+    coordinator.data = {POOL_ID: pool}
+    coordinator.last_update_success = True
+    coordinator.api = SimpleNamespace(cached_pools=[pool], get_pools=AsyncMock(return_value=[pool]))
+    coordinator.get_pools_from_data = lambda: [{"id": POOL_ID, **coordinator.data[POOL_ID]}]
+    listeners: list[Any] = []
+    coordinator.async_add_listener = lambda cb: listeners.append(cb) or (lambda: None)
+
+    added: list[Any] = []
+    entry = SimpleNamespace(
+        runtime_data=SimpleNamespace(coordinator=coordinator),
+        async_on_unload=lambda _unsub: None,
+    )
+    async_add = MagicMock(side_effect=lambda ents, *a, **k: added.extend(list(ents)))
+    await async_setup_entry(MagicMock(), entry, async_add)
+
+    uids_after_setup = {e.unique_id for e in added}
+    assert any("dev1" in u for u in uids_after_setup)
+    assert not any("dev2" in u for u in uids_after_setup)
+    assert listeners, "a coordinator update listener must be registered for dynamic devices"
+
+    # A new device shows up on a later poll; firing the listener must wire it.
+    pool["devices"].append(_pinned_pump("dev2"))
+    listeners[0]()
+
+    new_uids = {e.unique_id for e in added} - uids_after_setup
+    assert new_uids, "new device entities should be added without a reload"
+    assert all("dev2" in u for u in new_uids), "only the newly-added device's entities are created"
+
+
+# --- Victoria settle window (Issue #144) ---------------------------------
+
+
+def test_auto_mode_optimistic_timeout_is_longer_for_victoria() -> None:
+    """Victoria pumps hold the optimistic state far longer than the default.
+
+    The cloud lags 15-30 s behind a command and arming the schedule runs a ~1 min
+    PRIMING/CALIBRATION sequence, so the default 10 s made the toggle drop its
+    optimistic state and flap through intermediate values (Issue #144).
+    """
+    from unittest.mock import patch
+
+    from custom_components.fluidra_pool.const import OPTIMISTIC_ACTION_TIMEOUT, VICTORIA_OPTIMISTIC_TIMEOUT
+
+    assert VICTORIA_OPTIMISTIC_TIMEOUT > OPTIMISTIC_ACTION_TIMEOUT
+
+    auto = _auto()
+    with patch(
+        "custom_components.fluidra_pool.switch.pump.DeviceIdentifier.has_feature",
+        side_effect=lambda _d, feat: feat == "victoria_vs_mode",
+    ):
+        assert auto._optimistic_timeout == VICTORIA_OPTIMISTIC_TIMEOUT
+
+    with patch(
+        "custom_components.fluidra_pool.switch.pump.DeviceIdentifier.has_feature",
+        return_value=False,
+    ):
+        assert auto._optimistic_timeout == OPTIMISTIC_ACTION_TIMEOUT
+
+
+def test_auto_mode_victoria_holds_optimistic_state_past_default_timeout() -> None:
+    """A Victoria toggle keeps showing the requested state while the pump settles."""
+    import time
+    from unittest.mock import patch
+
+    from custom_components.fluidra_pool.const import OPTIMISTIC_ACTION_TIMEOUT
+
+    auto = _auto({"auto_reported": 0})  # cloud still says off
+    auto._set_pending_state(True)  # user just switched it on
+    # Simulate the default timeout having elapsed but the pump still priming.
+    auto._last_action_time = time.time() - (OPTIMISTIC_ACTION_TIMEOUT + 5)
+
+    with patch(
+        "custom_components.fluidra_pool.switch.pump.DeviceIdentifier.has_feature",
+        side_effect=lambda _d, feat: feat == "victoria_vs_mode",
+    ):
+        assert auto.is_on is True  # still optimistic, not flipped back to off

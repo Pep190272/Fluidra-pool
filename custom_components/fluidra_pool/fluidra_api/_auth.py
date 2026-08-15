@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import time
@@ -18,37 +19,59 @@ from ..api_resilience import (
 )
 from ..utils import mask_email
 from ._base import FluidraAPIBase
-from ._constants import COGNITO_CLIENT_ID, COGNITO_ENDPOINT, FLUIDRA_EMEA_BASE, FLUIDRA_USER_AGENT
+from ._constants import (
+    COGNITO_CLIENT_ID,
+    COGNITO_ENDPOINT,
+    CONSUMER_PROFILE_ENDPOINT,
+    FLUIDRA_USER_AGENT,
+)
 
 _LOGGER = logging.getLogger(__name__)
 
 
 class AuthMixin(FluidraAPIBase):
-    """Cognito sign-in, MFA, refresh-token rotation, and standard auth headers."""
+    """Cognito sign-in, MFA, refresh-token rotation, and standard auth headers.
+
+    Every Cognito call passes ``skip_circuit_breaker=True`` on purpose: the
+    circuit breaker guards the Fluidra EMEA data plane, and Cognito is a
+    different service on a different host — sharing the breaker would let an
+    EMEA outage block re-authentication (and vice versa).
+    """
 
     async def authenticate(self) -> None:
         """Authenticate via AWS Cognito.
 
         Tries the stored refresh token first to avoid MFA on every HA restart.
         Falls back to full credentials auth only when needed.
+
+        The user-profile fetch and the pool/device discovery are independent of
+        each other once the access token is valid, so they run concurrently —
+        this trims one full RTT from the boot critical path (profile and pools
+        used to be two sequential requests).
         """
         try:
             if self.refresh_token:
                 if await self.refresh_access_token():
                     _LOGGER.info("Authenticated via stored refresh token (no MFA required)")
-                    await self._get_user_profile()
-                    await self.async_update_data()
+                    await self._post_auth_discovery()
                     return
                 _LOGGER.warning("Stored refresh token expired or invalid, falling back to full auth")
 
             await self._cognito_initial_auth()
-            await self._get_user_profile()
-            await self.async_update_data()
+            await self._post_auth_discovery()
 
         except FluidraError:
             raise
         except (aiohttp.ClientError, TimeoutError, json.JSONDecodeError, KeyError) as err:
             raise FluidraAuthError(f"Authentication failed: {type(err).__name__}") from err
+
+    async def _post_auth_discovery(self) -> None:
+        """Fetch the consumer profile and discover pools/devices concurrently.
+
+        Extracted from :meth:`authenticate` so both call sites (stored-token and
+        full-auth) share the same boot-time parallelism.
+        """
+        await asyncio.gather(self._get_user_profile(), self.async_update_data())
 
     async def _cognito_initial_auth(self) -> None:
         """Perform initial AWS Cognito authentication."""
@@ -128,13 +151,25 @@ class AuthMixin(FluidraAPIBase):
         if not self.access_token:
             raise FluidraAuthError("Access token not received after MFA")
 
+    async def initial_auth(self) -> None:
+        """Run the raw Cognito credentials auth (public config-flow entry).
+
+        Unlike :meth:`authenticate`, this performs no profile fetch or device
+        discovery — the config flow only needs to validate credentials. Raises
+        :class:`FluidraMFARequired` when the account has MFA enabled.
+        """
+        await self._cognito_initial_auth()
+
+    async def respond_to_mfa(self, code: str, session: str, challenge_name: str = "SOFTWARE_TOKEN_MFA") -> None:
+        """Complete a Cognito MFA challenge (public config-flow entry)."""
+        await self._cognito_respond_to_mfa(code, session, challenge_name)
+
     def _store_tokens(self, auth_result: dict[str, Any]) -> None:
         """Persist freshly-minted tokens and notify the entry callback."""
         self.access_token = auth_result.get("AccessToken")
         new_refresh = auth_result.get("RefreshToken")
         if new_refresh:
             self.refresh_token = new_refresh
-        self.id_token = auth_result.get("IdToken")
 
         expires_in = auth_result.get("ExpiresIn", 3600)
         margin = min(300, max(30, expires_in // 10))
@@ -142,18 +177,28 @@ class AuthMixin(FluidraAPIBase):
 
         if not self.access_token:
             raise FluidraAuthError("Access token not received")
+        self._last_token_store = time.monotonic()
 
         if self.refresh_token and self._on_token_persist:
             self._on_token_persist(self.refresh_token)
 
     async def _get_user_profile(self) -> dict[str, Any]:
-        """Fetch user profile."""
+        """Fetch user profile.
+
+        Mirrors the official mobile app's login sequence (Cognito auth →
+        consumers/me → discovery) so our traffic stays indistinguishable from
+        the app's. We also keep the consumer id, which lets the coordinator tell
+        whether the account owns a pool or only has shared/viewer access.
+        Failures are ignored on purpose — the profile is not required to operate.
+        """
         headers = self._build_auth_headers()
-        profile_url = f"{FLUIDRA_EMEA_BASE}/mobile/consumers/me"
 
         try:
-            status, data, _ = await self._request("GET", profile_url, headers=headers)
+            status, data, _ = await self._request("GET", CONSUMER_PROFILE_ENDPOINT, headers=headers)
             if status == 200 and isinstance(data, dict):
+                consumer_id = data.get("id")
+                if isinstance(consumer_id, str):
+                    self.user_id = consumer_id
                 return data
         except FluidraError:
             _LOGGER.debug("Failed to get user profile, continuing anyway")
@@ -209,7 +254,13 @@ class AuthMixin(FluidraAPIBase):
 
     async def force_refresh_token(self) -> bool:
         """Refresh credentials after the API rejects the current access token."""
+        entered_at = time.monotonic()
         async with self._token_lock:
+            # Double-checked locking: when several parallel requests hit a 401
+            # at once, only the first waiter actually refreshes — the others
+            # see a token stored after they entered and reuse it.
+            if self._last_token_store > entered_at and self.access_token:
+                return True
             if await self.refresh_access_token():
                 return True
 
@@ -245,6 +296,7 @@ class AuthMixin(FluidraAPIBase):
         headers = {
             "Content-Type": "application/x-amz-json-1.1; charset=utf-8",
             "X-Amz-Target": "AWSCognitoIdentityProviderService.InitiateAuth",
+            "User-Agent": FLUIDRA_USER_AGENT,
         }
 
         try:

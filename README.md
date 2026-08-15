@@ -1,6 +1,6 @@
 [![hacs_badge](https://img.shields.io/badge/HACS-Custom-41BDF5.svg)](https://github.com/hacs/integration)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
-[![Quality Scale](https://img.shields.io/badge/Quality_Scale-Silver-silver.svg)](https://developers.home-assistant.io/docs/core/integration-quality-scale/)
+[![Quality Scale](https://img.shields.io/badge/Quality_Scale-Platinum-27ae60.svg)](https://developers.home-assistant.io/docs/core/integration-quality-scale/)
 [![GitHub release](https://img.shields.io/github/v/release/foXaCe/Fluidra-pool?sort=semver)](https://github.com/foXaCe/Fluidra-pool/releases)
 [![Donate](https://img.shields.io/badge/Donate-PayPal-blue.svg)](https://www.paypal.com/paypalme/foXaCe66)
 
@@ -51,7 +51,8 @@ Your contributions help me keep improving this project and adding new equipment.
 | `climate` | Heat-pump control (HVAC mode/action, target temperature, preset modes) |
 | `light`  | LumiPlus Connect RGBW (on/off, brightness, colour) |
 | `time`   | Schedule start/end time editing |
-| `sensor` | pH, ORP, free chlorine, salinity, temperatures, pump speed/mode, firmware, signal, status |
+| `button` | Victoria VS pump Stop (halt without disarming the schedule) |
+| `sensor` | pH, ORP, free chlorine, salinity, temperatures, pump speed/mode, power & head & flow (VS pumps), firmware, signal, status |
 
 ---
 
@@ -67,6 +68,14 @@ profile, so unknown equipment is usually still usable.
   - Automatic / scheduled mode
   - Custom speed control (0–100%)
   - Up to 8 daily schedule slots (per-slot speed + start/end time)
+- **Victoria Smart Connect VS** (AstralPool, `mppvs`) — running state, live output %,
+  AUTO / QUICK FUNCTION mode, speed or flow-rate setpoint, plus **power (W)**, **head (m)**
+  and **flow rate (m³/h)** sensors, and an **activity** sensor that reports the transient
+  priming / calibration phases separately from the speed. Control mirrors the app: an
+  **Auto-schedule toggle** and a dedicated **Stop button** (halts the motor without
+  disarming the schedule); speed-preset dry-contact inputs are exposed as diagnostic
+  binary sensors. Direct speed/quick-function control (via `/schedulers`) is still being
+  added — see [#144](https://github.com/foXaCe/Fluidra-pool/issues/144).
 - Generic variable-speed pump fallback
 
 ### 🔥 Heat Pumps
@@ -74,20 +83,32 @@ profile, so unknown equipment is usually still usable.
 - **Z250iQ / Z25iQ** — on/off, target temperature, current temperature
 - **Z260iQ** — HVAC modes (heat / cool / heat-cool), presets, no-flow alarm, water/air temperatures
 - **Z550iQ+** — HVAC modes (heat / cool / auto), presets, HVAC action (heating/cooling/idle/no-flow), water/air temperatures
+- **Z650iQ** — HVAC modes (heat / cool / heat-cool), Smart+/Smart/Ecosilence/Boost presets,
+  on/off switch, water/air temperatures, running hours, compressor running hours, WiFi
+  signal, instantaneous power (Watts) and compressor modulation (percent). Reverse-
+  engineered from live captures; some registers remain undecoded and show up in
+  the unmapped-register
+  debug log.
+- **Gre HPGIC** — on/off, target temperature, water temperature
 - Generic heat-pump fallback
 
 ### 🧂 Salt Chlorinators / Electrolysers
 - **tecnoLC2 family (30+ models)** — AstralPool Clear Connect / Clear Connect Evo / Scalable,
-  Blauswim, IrriPool iSalt, KLINWASS Mark Salt, Zodiac OE iQ, Gre, Energy Connect, and more
-  (`CC*` / `LC*` serials, including bridged `*.nn_*` devices)
-- **Zodiac EXO iQ** (e.g. iQ35 / NS25) — 0–100% chlorination in 5% steps, output schedules
+  Blauswim, IrriPool / Irrijardin iSalt, KLINWASS Mark Salt, Zodiac GenSalt OE iQ, Zodiac
+  Ei2 iQ / Ei2 pH Evo, Gre, Energy Connect, and more (`CC*` / `LC*` serials, including
+  bridged `*.nn_*` devices)
+- **Automatic tecnoLC2 detection** — a chlorinator whose serial isn't on file yet is
+  auto-recognised from its component signature and reads pH, ORP, water temperature and
+  salinity on the right registers, so unknown units work correctly without waiting for
+  their serial to be added by hand
+- **Zodiac EXO iQ** (e.g. iQ35 / NS25) — 0–100% chlorination in 5% steps, output schedules, Boost (with remaining-time countdown), Low and freeze protection, Aux 1 / Aux 2 outputs (Off/On/Auto), heating setpoint
 - **DM24049704** (Domotic S2) — program/slot schedule format
 - Typical capabilities (model-dependent): chlorination level (0–100%), **pH setpoint**,
   **ORP/Redox setpoint**, boost mode, schedules, and sensors (pH, ORP, free chlorine,
   salinity, water temperature)
 
 ### 🧪 Water Analysers
-- **Zodiac Blue Connect Silver** (`WA*`, BC3) — pH, ORP and water-temperature sensors (read-only)
+- **Zodiac Blue Connect Silver / Gold** (`WA*`, BC3) — pH, ORP and water-temperature sensors (read-only)
 
 ### 💡 Pool Lighting
 - **LumiPlus Connect** (RGBW) — on/off, brightness (0–100%), RGBW colour + white channel,
@@ -146,6 +167,15 @@ The integration is configured entirely from the UI (config flow):
 - **MFA** — if your account uses multi-factor authentication, you'll be prompted for the code
 - **Re-auth / Reconfigure** — Home Assistant prompts you to re-authenticate if the token is
   rejected; you can also reconfigure (e.g. change the account email) from the integration menu
+
+> [!IMPORTANT]
+> **Region — EMEA (Europe) only.** This integration talks to Fluidra's **EMEA** backend
+> (`api.fluidra-emea.com`). Only myFluidra / Fluidra Connect accounts registered in the
+> EMEA region can log in. Accounts created in other regions — e.g. **North America**
+> (iAquaLink US) or **Australia / APAC** — live on a different Fluidra backend and will be
+> rejected with an "invalid credentials" error even though the same credentials work in the
+> official app. Multi-region support isn't available yet (it needs the regional endpoints and
+> a test account to implement safely).
 
 ### Options
 - **Update interval** — polling interval in seconds, configurable from **30 to 1800**
@@ -249,10 +279,13 @@ entities:
 
 | Symptom | Likely cause / fix |
 |---------|--------------------|
+| `Invalid credentials` but the app works | Account registered **outside EMEA** (North America, Australia, …) — not supported (see [Configuration](#-configuration)) |
 | `Authentication failed` | Wrong credentials or expired token → re-authenticate |
 | `No pools found` | Account has no equipment, or it's offline in the Fluidra app |
+| Wrong readings after a HACS update (e.g. a chlorinator's pH shows a temperature) | A custom integration's code only reloads on a **full Home Assistant restart** (Settings → System → Restart) — a "Reload" is not enough. Restart, then re-check |
 | Device shows *unavailable* | The device reports itself offline to the Fluidra cloud |
 | Commands seem ignored | Check debug logs; transient cloud rejections now surface as errors |
+| Setpoints/switches never change (no error) | Account has **viewer** (read-only) access to the pool — the cloud accepts writes but doesn't apply them. Check the `access_level` attribute on the pool status sensor; owner access is required to control equipment |
 
 ---
 

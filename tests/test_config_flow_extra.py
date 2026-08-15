@@ -142,7 +142,7 @@ async def test_reauth_confirm_success(hass: HomeAssistant, mock_api: AsyncMock) 
     entry = _entry(hass)
     result = await _start_reauth(hass, entry)
 
-    mock_api._cognito_initial_auth = AsyncMock(return_value=None)
+    mock_api.initial_auth = AsyncMock(return_value=None)
 
     with patch(_PATCH_TARGET, return_value=mock_api):
         result = await hass.config_entries.flow.async_configure(
@@ -156,12 +156,39 @@ async def test_reauth_confirm_success(hass: HomeAssistant, mock_api: AsyncMock) 
     assert entry.data[CONF_PASSWORD] == "new-password"
 
 
+async def test_reauth_confirm_schedules_single_reload(hass: HomeAssistant, mock_api: AsyncMock) -> None:
+    """Reauth completion schedules exactly one entry reload.
+
+    Regression for the HA 2026.6 deprecation of combining an entry update
+    listener with ``async_update_reload_and_abort``: the flow must reload via
+    a single explicit ``async_schedule_reload`` call.
+    """
+    entry = _entry(hass)
+    result = await _start_reauth(hass, entry)
+
+    mock_api.initial_auth = AsyncMock(return_value=None)
+
+    with (
+        patch(_PATCH_TARGET, return_value=mock_api),
+        patch.object(hass.config_entries, "async_schedule_reload") as mock_reload,
+    ):
+        result = await hass.config_entries.flow.async_configure(
+            result["flow_id"],
+            user_input={CONF_EMAIL: EMAIL, CONF_PASSWORD: "new-password"},
+        )
+        await hass.async_block_till_done()
+
+    assert result["type"] is FlowResultType.ABORT
+    assert result["reason"] == "reauth_successful"
+    mock_reload.assert_called_once_with(entry.entry_id)
+
+
 async def test_reauth_confirm_invalid_auth(hass: HomeAssistant, mock_api: AsyncMock) -> None:
     """Bad credentials in reauth_confirm surface invalid_auth."""
     entry = _entry(hass)
     result = await _start_reauth(hass, entry)
 
-    mock_api._cognito_initial_auth = AsyncMock(side_effect=FluidraAuthError("401"))
+    mock_api.initial_auth = AsyncMock(side_effect=FluidraAuthError("401"))
 
     with patch(_PATCH_TARGET, return_value=mock_api):
         result = await hass.config_entries.flow.async_configure(
@@ -179,7 +206,7 @@ async def test_reauth_confirm_cannot_connect(hass: HomeAssistant, mock_api: Asyn
     entry = _entry(hass)
     result = await _start_reauth(hass, entry)
 
-    mock_api._cognito_initial_auth = AsyncMock(side_effect=FluidraConnectionError("timeout"))
+    mock_api.initial_auth = AsyncMock(side_effect=FluidraConnectionError("timeout"))
 
     with patch(_PATCH_TARGET, return_value=mock_api):
         result = await hass.config_entries.flow.async_configure(
@@ -197,8 +224,8 @@ async def test_reauth_via_mfa_success(hass: HomeAssistant, mock_api: AsyncMock) 
     entry = _entry(hass)
     result = await _start_reauth(hass, entry)
 
-    mock_api._cognito_initial_auth = AsyncMock(side_effect=FluidraMFARequired("SOFTWARE_TOKEN_MFA", "sess-123"))
-    mock_api._cognito_respond_to_mfa = AsyncMock(return_value=None)
+    mock_api.initial_auth = AsyncMock(side_effect=FluidraMFARequired("SOFTWARE_TOKEN_MFA", "sess-123"))
+    mock_api.respond_to_mfa = AsyncMock(return_value=None)
     mock_api.refresh_token = "refresh-token-abc"
 
     with patch(_PATCH_TARGET, return_value=mock_api):
@@ -228,8 +255,8 @@ async def test_mfa_invalid_code(hass: HomeAssistant, mock_api: AsyncMock) -> Non
     entry = _entry(hass)
     result = await _start_reauth(hass, entry)
 
-    mock_api._cognito_initial_auth = AsyncMock(side_effect=FluidraMFARequired("SOFTWARE_TOKEN_MFA", "sess-xyz"))
-    mock_api._cognito_respond_to_mfa = AsyncMock(side_effect=FluidraAuthError("bad code"))
+    mock_api.initial_auth = AsyncMock(side_effect=FluidraMFARequired("SOFTWARE_TOKEN_MFA", "sess-xyz"))
+    mock_api.respond_to_mfa = AsyncMock(side_effect=FluidraAuthError("bad code"))
 
     with patch(_PATCH_TARGET, return_value=mock_api):
         result = await hass.config_entries.flow.async_configure(
@@ -279,7 +306,7 @@ async def test_reconfigure_success(hass: HomeAssistant, mock_api: AsyncMock) -> 
     entry = _entry(hass)
     result = await _start_reconfigure(hass, entry)
 
-    mock_api._cognito_initial_auth = AsyncMock(return_value=None)
+    mock_api.initial_auth = AsyncMock(return_value=None)
 
     with patch(_PATCH_TARGET, return_value=mock_api):
         result = await hass.config_entries.flow.async_configure(
@@ -293,12 +320,39 @@ async def test_reconfigure_success(hass: HomeAssistant, mock_api: AsyncMock) -> 
     assert entry.data[CONF_PASSWORD] == "changed-pass"
 
 
+async def test_reconfigure_schedules_single_reload(hass: HomeAssistant, mock_api: AsyncMock) -> None:
+    """Reconfigure completion schedules exactly one entry reload.
+
+    Same regression guard as ``test_reauth_confirm_schedules_single_reload``,
+    on the reconfigure path (which also rewrites the entry unique_id).
+    """
+    entry = _entry(hass)
+    result = await _start_reconfigure(hass, entry)
+
+    mock_api.initial_auth = AsyncMock(return_value=None)
+
+    with (
+        patch(_PATCH_TARGET, return_value=mock_api),
+        patch.object(hass.config_entries, "async_schedule_reload") as mock_reload,
+    ):
+        result = await hass.config_entries.flow.async_configure(
+            result["flow_id"],
+            user_input={CONF_EMAIL: EMAIL, CONF_PASSWORD: "changed-pass"},
+        )
+        await hass.async_block_till_done()
+
+    assert result["type"] is FlowResultType.ABORT
+    assert result["reason"] == "reconfigure_successful"
+    assert entry.data[CONF_PASSWORD] == "changed-pass"
+    mock_reload.assert_called_once_with(entry.entry_id)
+
+
 async def test_reconfigure_invalid_auth(hass: HomeAssistant, mock_api: AsyncMock) -> None:
     """Bad credentials in reconfigure surface invalid_auth."""
     entry = _entry(hass)
     result = await _start_reconfigure(hass, entry)
 
-    mock_api._cognito_initial_auth = AsyncMock(side_effect=FluidraAuthError("401"))
+    mock_api.initial_auth = AsyncMock(side_effect=FluidraAuthError("401"))
 
     with patch(_PATCH_TARGET, return_value=mock_api):
         result = await hass.config_entries.flow.async_configure(
@@ -316,7 +370,7 @@ async def test_reconfigure_cannot_connect(hass: HomeAssistant, mock_api: AsyncMo
     entry = _entry(hass)
     result = await _start_reconfigure(hass, entry)
 
-    mock_api._cognito_initial_auth = AsyncMock(side_effect=FluidraConnectionError("timeout"))
+    mock_api.initial_auth = AsyncMock(side_effect=FluidraConnectionError("timeout"))
 
     with patch(_PATCH_TARGET, return_value=mock_api):
         result = await hass.config_entries.flow.async_configure(
@@ -334,8 +388,8 @@ async def test_reconfigure_via_mfa_success(hass: HomeAssistant, mock_api: AsyncM
     entry = _entry(hass)
     result = await _start_reconfigure(hass, entry)
 
-    mock_api._cognito_initial_auth = AsyncMock(side_effect=FluidraMFARequired("SOFTWARE_TOKEN_MFA", "sess-r"))
-    mock_api._cognito_respond_to_mfa = AsyncMock(return_value=None)
+    mock_api.initial_auth = AsyncMock(side_effect=FluidraMFARequired("SOFTWARE_TOKEN_MFA", "sess-r"))
+    mock_api.respond_to_mfa = AsyncMock(return_value=None)
     mock_api.refresh_token = "rt-reconfig"
 
     with patch(_PATCH_TARGET, return_value=mock_api):
@@ -363,7 +417,7 @@ async def test_reconfigure_changed_email_success(hass: HomeAssistant, mock_api: 
     result = await _start_reconfigure(hass, entry)
 
     new_email = "fresh@example.com"
-    mock_api._cognito_initial_auth = AsyncMock(return_value=None)
+    mock_api.initial_auth = AsyncMock(return_value=None)
 
     with (
         patch(_PATCH_TARGET, return_value=mock_api),
@@ -391,8 +445,8 @@ async def test_reconfigure_changed_email_via_mfa(hass: HomeAssistant, mock_api: 
     result = await _start_reconfigure(hass, entry)
 
     new_email = "another@example.com"
-    mock_api._cognito_initial_auth = AsyncMock(side_effect=FluidraMFARequired("SOFTWARE_TOKEN_MFA", "sess-c"))
-    mock_api._cognito_respond_to_mfa = AsyncMock(return_value=None)
+    mock_api.initial_auth = AsyncMock(side_effect=FluidraMFARequired("SOFTWARE_TOKEN_MFA", "sess-c"))
+    mock_api.respond_to_mfa = AsyncMock(return_value=None)
     mock_api.refresh_token = "rt-new-email"
 
     with (
@@ -431,7 +485,7 @@ async def test_reauth_confirm_unknown_error(hass: HomeAssistant, mock_api: Async
     entry = _entry(hass)
     result = await _start_reauth(hass, entry)
 
-    mock_api._cognito_initial_auth = AsyncMock(side_effect=FluidraError("weird"))
+    mock_api.initial_auth = AsyncMock(side_effect=FluidraError("weird"))
 
     with patch(_PATCH_TARGET, return_value=mock_api):
         result = await hass.config_entries.flow.async_configure(
@@ -449,8 +503,8 @@ async def test_mfa_unknown_error(hass: HomeAssistant, mock_api: AsyncMock) -> No
     entry = _entry(hass)
     result = await _start_reauth(hass, entry)
 
-    mock_api._cognito_initial_auth = AsyncMock(side_effect=FluidraMFARequired("SOFTWARE_TOKEN_MFA", "sess-u"))
-    mock_api._cognito_respond_to_mfa = AsyncMock(side_effect=FluidraError("weird mfa"))
+    mock_api.initial_auth = AsyncMock(side_effect=FluidraMFARequired("SOFTWARE_TOKEN_MFA", "sess-u"))
+    mock_api.respond_to_mfa = AsyncMock(side_effect=FluidraError("weird mfa"))
 
     with patch(_PATCH_TARGET, return_value=mock_api):
         result = await hass.config_entries.flow.async_configure(
@@ -474,8 +528,8 @@ async def test_mfa_cannot_connect(hass: HomeAssistant, mock_api: AsyncMock) -> N
     entry = _entry(hass)
     result = await _start_reauth(hass, entry)
 
-    mock_api._cognito_initial_auth = AsyncMock(side_effect=FluidraMFARequired("SOFTWARE_TOKEN_MFA", "sess-cc"))
-    mock_api._cognito_respond_to_mfa = AsyncMock(side_effect=FluidraConnectionError("down"))
+    mock_api.initial_auth = AsyncMock(side_effect=FluidraMFARequired("SOFTWARE_TOKEN_MFA", "sess-cc"))
+    mock_api.respond_to_mfa = AsyncMock(side_effect=FluidraConnectionError("down"))
 
     with patch(_PATCH_TARGET, return_value=mock_api):
         result = await hass.config_entries.flow.async_configure(

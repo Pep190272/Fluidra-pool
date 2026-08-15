@@ -14,6 +14,7 @@ from custom_components.fluidra_pool.api_resilience import (
     FluidraMFARequired,
 )
 from custom_components.fluidra_pool.fluidra_api._auth import AuthMixin
+from custom_components.fluidra_pool.fluidra_api._constants import FLUIDRA_USER_AGENT
 
 
 class _FakeAPI(AuthMixin):
@@ -30,8 +31,8 @@ class _FakeAPI(AuthMixin):
         self.password = password
         self.refresh_token = refresh_token
         self.access_token: str | None = None
-        self.id_token: str | None = None
         self.token_expires_at: int | None = None
+        self._last_token_store: float = 0.0
         self._on_token_persist = on_token_persist
         self._token_lock = asyncio.Lock()
 
@@ -59,7 +60,6 @@ def test_store_tokens_sets_access_id_refresh_and_expiry() -> None:
     api = _FakeAPI()
     api._store_tokens(_ok_auth_result())
     assert api.access_token == "acc-1"
-    assert api.id_token == "id-1"
     assert api.refresh_token == "ref-1"
     assert api.token_expires_at is not None
     # Expiry should be a future timestamp with margin already subtracted.
@@ -282,6 +282,39 @@ async def test_get_user_profile_returns_empty_on_connection_error() -> None:
 # --- authenticate (high-level orchestration) -----------------------------
 
 
+async def test_post_auth_discovery_runs_profile_and_pools_concurrently() -> None:
+    """Profile fetch and pool discovery overlap in time (boot critical path).
+
+    Both only depend on the freshly-obtained access token, so they must run
+    in parallel — sequential execution would add a whole RTT to every HA
+    restart. Each stub blocks on an event released by the other's *entry*,
+    so if they ran one after another the second would deadlock forever.
+    """
+    api = _FakeAPI(refresh_token="ref-1")
+    api._request.return_value = (200, {"AuthenticationResult": _ok_auth_result()}, "{}")
+
+    profile_started = asyncio.Event()
+    discovery_started = asyncio.Event()
+
+    async def _slow_profile() -> dict:
+        profile_started.set()
+        await discovery_started.wait()
+        return {}
+
+    async def _slow_update_data() -> None:
+        discovery_started.set()
+        await profile_started.wait()
+
+    api._get_user_profile = _slow_profile
+    api.async_update_data = _slow_update_data
+
+    # A 2s cap turns a regression to sequential execution into a failure
+    # instead of an infinite hang.
+    await asyncio.wait_for(api._post_auth_discovery(), timeout=2)
+    assert profile_started.is_set()
+    assert discovery_started.is_set()
+
+
 async def test_authenticate_uses_refresh_token_first_when_available() -> None:
     """When a refresh token exists, try it before falling back to MFA-able auth."""
     api = _FakeAPI(refresh_token="ref-1")
@@ -396,3 +429,28 @@ async def test_force_refresh_token_falls_back_to_initial_auth_on_refresh_failure
         (200, {"AuthenticationResult": _ok_auth_result()}, "{}"),  # initial auth.
     ]
     assert await api.force_refresh_token() is True
+
+
+# --- Phase-4 hardening ----------------------------------------------------
+
+
+async def test_refresh_access_token_sends_user_agent() -> None:
+    """The refresh call must carry the app User-Agent like every Cognito call."""
+    api = _FakeAPI(refresh_token="ref-0")
+    api._request.return_value = (200, {"AuthenticationResult": _ok_auth_result()}, "{}")
+
+    assert await api.refresh_access_token() is True
+
+    _, kwargs = api._request.await_args
+    assert kwargs["headers"]["User-Agent"] == FLUIDRA_USER_AGENT
+
+
+async def test_force_refresh_token_skips_when_another_task_already_refreshed() -> None:
+    """Double-checked locking: a token stored while waiting on the lock is reused."""
+    api = _FakeAPI(refresh_token="ref-0")
+    api.access_token = "fresh-token"
+    # Simulate a concurrent waiter that stored a token after we entered.
+    api._last_token_store = time.monotonic() + 60
+
+    assert await api.force_refresh_token() is True
+    api._request.assert_not_awaited()

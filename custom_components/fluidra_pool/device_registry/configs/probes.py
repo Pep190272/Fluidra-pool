@@ -25,7 +25,14 @@ PROBE_CONFIGS: dict[str, DeviceConfig] = {
         required_components=[0, 1, 2, 3],
         # Sensor-only: no switch (probe doesn't actuate), no select (no mode),
         # no number (no chlorination level).
-        entities=["sensor_info"],
+        entities=[
+            "sensor_info",
+            # c0 already decodes to signal_strength_component under the
+            # blue_connect info layout; only the entity was missing. Confirmed
+            # on a Blue Connect Gold dump: "C0: RSSI" reading -67
+            # (Issue #186, @Kal42).
+            "sensor_wifi_signal",
+        ],
         features={
             # No mode select (probe-only device).
             "skip_mode_select": True,
@@ -60,7 +67,14 @@ PROBE_CONFIGS: dict[str, DeviceConfig] = {
         family_patterns=["data collectors"],
         components_range=25,
         required_components=[0, 1, 2, 3],
-        entities=["sensor_info"],
+        entities=[
+            "sensor_info",
+            # c0 already decodes to signal_strength_component under the
+            # blue_connect info layout; only the entity was missing. Confirmed
+            # on a Blue Connect Gold dump: "C0: RSSI" reading -67
+            # (Issue #186, @Kal42).
+            "sensor_wifi_signal",
+        ],
         features={
             "skip_mode_select": True,
             "info_layout": "blue_connect",
@@ -68,17 +82,25 @@ PROBE_CONFIGS: dict[str, DeviceConfig] = {
                 "temperature": 12,  # Direct °C.
                 "ph": 13,  # Direct decimal pH.
                 "orp": 14,  # Direct mV.
+                # Conductivity in µS/cm on c15 — identified while pinning salinity
+                # (Issue #75, ≈8461) and independently confirmed against the app's
+                # Information page reading 1362 µS/cm (Issue #186, @Kal42).
+                "conductivity": 15,
                 # Salinity confirmed on c16 (direct g/L) — 5.14 ≈ the app's 5.1 g/L
-                # (Issue #75 fresh diagnostics; c15 holds conductivity ≈ 8461, not salinity).
+                # (Issue #75 fresh diagnostics; c15 is the conductivity, not salinity).
                 "salinity": 16,
+                # Battery voltage in mV on c19 (Issue #138 — samples 4116/4104 mV,
+                # consistent with a near-full cell on this 3.6 V-nominal probe).
+                "battery_voltage": 19,
             },
             "sensor_divisors": {
                 "temperature": 1,
                 "ph": 1,
                 "orp": 1,
                 "salinity": 1,
+                "battery_voltage": 1,
             },
-            "specific_components": [12, 13, 14, 16],
+            "specific_components": [12, 13, 14, 15, 16, 19],
         },
         priority=90,  # Above blue_connect_silver (88) for Gold units.
     ),

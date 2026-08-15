@@ -85,6 +85,26 @@ def test_temperature_sensor_unknown_type_returns_none() -> None:
     assert sensor.native_value is None
 
 
+# --- FluidraPoolSensorEntity base (inherited from FluidraPoolEntity) ----
+
+
+def test_sensor_unique_id_format_is_frozen() -> None:
+    """unique_id format must stay `{DOMAIN}_{pool}_{device}_sensor[_type]` verbatim."""
+    device = _pinned_device("d1")
+    sensor = FluidraTemperatureSensor(_coord([device], None), SimpleNamespace(), "p1", "d1", "ph")
+    assert sensor.unique_id == "fluidra_pool_p1_d1_sensor_ph"
+
+    sensor_no_type = FluidraTemperatureSensor(_coord([device], None), SimpleNamespace(), "p1", "d1", "")
+    assert sensor_no_type.unique_id == "fluidra_pool_p1_d1_sensor"
+
+
+def test_sensor_device_info_exposes_firmware() -> None:
+    """device_info now inherits sw_version from FluidraPoolEntity (was missing before)."""
+    device = _pinned_device(DEVICE_ID, firmware_version_component="1.23")
+    sensor = FluidraTemperatureSensor(_coord([device]), SimpleNamespace(), POOL_ID, DEVICE_ID, "current")
+    assert sensor.device_info["sw_version"] == "1.23"
+
+
 # --- FluidraLightBrightnessSensor ----------------------------------------
 
 
@@ -207,6 +227,7 @@ def test_pool_location_unknown_when_missing() -> None:
         ("salinity", 174, 627, 6.27),
         ("free_chlorine", 178, 150, 1.5),
         ("chlorination_actual", 154, 80, 80.0),
+        ("battery_voltage", 19, 4116, 4116.0),
     ],
 )
 def test_chlorinator_sensor_applies_per_type_divisor(
@@ -218,6 +239,20 @@ def test_chlorinator_sensor_applies_per_type_divisor(
         _coord([device]), SimpleNamespace(), POOL_ID, DEVICE_ID, sensor_type, component_id
     )
     assert sensor.native_value == pytest.approx(expected)
+
+
+def test_chlorinator_battery_voltage_is_diagnostic_millivolt_sensor() -> None:
+    """The Blue Connect battery voltage sensor is a diagnostic mV voltage sensor (Issue #138)."""
+    from homeassistant.components.sensor import SensorDeviceClass
+    from homeassistant.const import EntityCategory, UnitOfElectricPotential
+
+    device = _pinned_device(DEVICE_ID, components={"19": {"reportedValue": 4104}})
+    sensor = FluidraChlorinatorSensor(_coord([device]), SimpleNamespace(), POOL_ID, DEVICE_ID, "battery_voltage", 19)
+    assert sensor.native_value == pytest.approx(4104.0)
+    assert sensor.native_unit_of_measurement == UnitOfElectricPotential.MILLIVOLT
+    assert sensor.device_class is SensorDeviceClass.VOLTAGE
+    assert sensor.entity_category is EntityCategory.DIAGNOSTIC
+    assert sensor.unique_id == f"fluidra_{DEVICE_ID}_battery_voltage"
 
 
 def test_chlorinator_sensor_returns_none_when_no_reading() -> None:
@@ -254,3 +289,170 @@ def test_chlorinator_sensor_unavailable_when_no_components() -> None:
     device = _pinned_device(DEVICE_ID, components={})
     sensor = FluidraChlorinatorSensor(_coord([device]), SimpleNamespace(), POOL_ID, DEVICE_ID, "ph", 165)
     assert sensor.available is False
+
+
+def test_chlorinator_orp_zero_reads_unknown() -> None:
+    """A flat 0 mV ORP means no probe is connected (eXO iQ LS) — Issue #111.
+
+    An immersed redox probe never reads exactly 0 mV, so the sensor reports
+    None ("unknown") instead of a misleading 0.
+    """
+    device = _pinned_device(DEVICE_ID, components={"63": {"reportedValue": 0}})
+    sensor = FluidraChlorinatorSensor(_coord([device]), SimpleNamespace(), POOL_ID, DEVICE_ID, "orp", 63)
+    assert sensor.native_value is None
+
+
+def test_chlorinator_orp_nonzero_reads_value() -> None:
+    """A real ORP reading is still reported unchanged (regression guard for #111)."""
+    device = _pinned_device(DEVICE_ID, components={"63": {"reportedValue": 738}})
+    sensor = FluidraChlorinatorSensor(_coord([device]), SimpleNamespace(), POOL_ID, DEVICE_ID, "orp", 63)
+    assert sensor.native_value == pytest.approx(738.0)
+
+
+def test_chlorinator_zero_non_orp_sensor_still_reads_zero() -> None:
+    """The zero-suppression is ORP-only: other sensors keep a legitimate 0 reading."""
+    device = _pinned_device(DEVICE_ID, components={"178": {"reportedValue": 0}})
+    sensor = FluidraChlorinatorSensor(_coord([device]), SimpleNamespace(), POOL_ID, DEVICE_ID, "free_chlorine", 178)
+    assert sensor.native_value == pytest.approx(0.0)
+
+
+def _device_with_sensors_feature(device_id: str, components: dict, sensors: dict) -> dict:
+    """Device pinned to a profile whose `sensors` feature maps the given components."""
+    device = _pinned_device(device_id, components=components)
+    device["_identify_cache"]["config"] = SimpleNamespace(
+        device_type="chlorinator",
+        features={"sensors": sensors},
+        components_range=25,
+        required_components=[0, 1, 2, 3],
+        entities=[],
+    )
+    return device
+
+
+def test_chlorinator_sensor_follows_profile_reroute() -> None:
+    """A pH sensor built on the generic mapping (c172) follows the tecnoLC2 re-route.
+
+    Regression for Issue #156: an unknown tecnoLC2 chlorinator is first identified
+    as the generic catch-all (pH on c172) so its pH sensor is created with
+    component 172; once c8/c172 are scanned the device re-routes to the tecnoLC2
+    signature profile (pH on c165), but the entity is never rebuilt. The sensor
+    must resolve its component from the *current* profile and read c165 (7.41),
+    not keep reading the water temperature on c172 (2.61) forever.
+    """
+    device = _device_with_sensors_feature(
+        DEVICE_ID,
+        components={
+            "172": {"reportedValue": 261},  # water temperature, would read as pH 2.61
+            "165": {"reportedValue": 741},  # the real pH
+        },
+        sensors={"ph": 165, "orp": 170, "temperature": 172, "salinity": 174},
+    )
+    # Entity created with the stale generic component 172.
+    sensor = FluidraChlorinatorSensor(_coord([device]), SimpleNamespace(), POOL_ID, DEVICE_ID, "ph", 172)
+    assert sensor.native_value == pytest.approx(7.41)
+    assert sensor.extra_state_attributes["component_id"] == 165
+
+
+def test_chlorinator_sensor_stable_profile_uses_creation_component() -> None:
+    """When the profile maps the sensor to its creation component, nothing changes."""
+    device = _device_with_sensors_feature(
+        DEVICE_ID,
+        components={"165": {"reportedValue": 730}},
+        sensors={"ph": 165},
+    )
+    sensor = FluidraChlorinatorSensor(_coord([device]), SimpleNamespace(), POOL_ID, DEVICE_ID, "ph", 165)
+    assert sensor.native_value == pytest.approx(7.30)
+
+
+def test_chlorinator_sensor_falls_back_when_type_absent_from_profile() -> None:
+    """A sensor type missing from the current profile keeps its creation component."""
+    device = _device_with_sensors_feature(
+        DEVICE_ID,
+        components={"178": {"reportedValue": 150}},
+        sensors={"ph": 165},  # no free_chlorine mapping
+    )
+    sensor = FluidraChlorinatorSensor(_coord([device]), SimpleNamespace(), POOL_ID, DEVICE_ID, "free_chlorine", 178)
+    assert sensor.native_value == pytest.approx(1.5)
+
+
+def test_chlorinator_ph_zero_reads_unknown() -> None:
+    """A pH of exactly 0 is impossible for real pool water (Issue #129).
+
+    On some bridges the pH register only echoes the setpoint and clears to 0
+    when the dosing pump is idle, so 0 means "no live reading", not pH 0.0.
+    """
+    device = _pinned_device(DEVICE_ID, components={"8": {"reportedValue": 0}})
+    sensor = FluidraChlorinatorSensor(_coord([device]), SimpleNamespace(), POOL_ID, DEVICE_ID, "ph", 8)
+    assert sensor.native_value is None
+
+
+def test_chlorinator_salinity_zero_reads_unknown() -> None:
+    """A running salt cell never reads exactly 0 g/L — a frozen 0 means no reading (Issue #129).
+
+    With no prior real reading captured (e.g. right after an HA restart),
+    there is nothing to fall back to, so this stays "unknown" — see
+    test_chlorinator_salinity_zero_falls_back_to_last_known_value for the
+    case where a real reading was seen earlier in the same session.
+    """
+    device = _pinned_device(DEVICE_ID, components={"185": {"reportedValue": 0}})
+    sensor = FluidraChlorinatorSensor(_coord([device]), SimpleNamespace(), POOL_ID, DEVICE_ID, "salinity", 185)
+    assert sensor.native_value is None
+
+
+def test_chlorinator_salinity_zero_falls_back_to_last_known_value() -> None:
+    """Salinity holds the last real reading while production is too low to measure.
+
+    Unlike ORP/pH, a salinity probe reading 0 is a *temporary* condition
+    (Fluidra documents it as chlorination production dropping below ~40%,
+    not a hardware/echo issue), so a dashboard gauge is better served by the
+    last real value than by going blank every time production dips.
+    """
+    device = _pinned_device(DEVICE_ID, components={"185": {"reportedValue": 467}})
+    sensor = FluidraChlorinatorSensor(_coord([device]), SimpleNamespace(), POOL_ID, DEVICE_ID, "salinity", 185)
+    sensor._update_last_known_salinity()  # a trustworthy poll happened
+    assert sensor.native_value == pytest.approx(4.67)
+
+    # Production drops: the component now reports 0.
+    device["components"] = {"185": {"reportedValue": 0}}
+    sensor._update_last_known_salinity()  # no-op: 0 is not a real reading
+    assert sensor.native_value == pytest.approx(4.67)
+
+
+def test_chlorinator_salinity_extra_state_attributes_expose_last_known() -> None:
+    """The salinity sensor exposes last_known_value/at and low_production; others don't."""
+    device = _pinned_device(DEVICE_ID, components={"185": {"reportedValue": 467}})
+    sensor = FluidraChlorinatorSensor(_coord([device]), SimpleNamespace(), POOL_ID, DEVICE_ID, "salinity", 185)
+    sensor._update_last_known_salinity()
+
+    device["components"] = {"185": {"reportedValue": 0}}
+    attrs = sensor.extra_state_attributes
+    assert attrs["last_known_value"] == pytest.approx(4.67)
+    assert attrs["last_known_at"] is not None
+    assert attrs["low_production"] is True
+
+    orp_device = _pinned_device(DEVICE_ID, components={"63": {"reportedValue": 738}})
+    orp_sensor = FluidraChlorinatorSensor(_coord([orp_device]), SimpleNamespace(), POOL_ID, DEVICE_ID, "orp", 63)
+    assert "last_known_value" not in orp_sensor.extra_state_attributes
+
+
+def test_chlorinator_salinity_last_known_update_is_a_no_op_for_other_sensor_types() -> None:
+    """`_update_last_known_salinity` only tracks salinity, mirroring the zero-value guard."""
+    device = _pinned_device(DEVICE_ID, components={"63": {"reportedValue": 0}})
+    sensor = FluidraChlorinatorSensor(_coord([device]), SimpleNamespace(), POOL_ID, DEVICE_ID, "orp", 63)
+    sensor._update_last_known_salinity()
+    assert sensor._last_known_value is None
+    assert sensor._last_known_at is None
+
+
+def test_chlorinator_ph_nonzero_reads_value() -> None:
+    """A real pH reading is still reported unchanged (regression guard for #129)."""
+    device = _pinned_device(DEVICE_ID, components={"165": {"reportedValue": 742}})
+    sensor = FluidraChlorinatorSensor(_coord([device]), SimpleNamespace(), POOL_ID, DEVICE_ID, "ph", 165)
+    assert sensor.native_value == pytest.approx(7.42)
+
+
+def test_chlorinator_temperature_zero_still_reads_zero() -> None:
+    """Temperature is not guarded: 0 °C is a legitimate (if cold) reading."""
+    device = _pinned_device(DEVICE_ID, components={"172": {"reportedValue": 0}})
+    sensor = FluidraChlorinatorSensor(_coord([device]), SimpleNamespace(), POOL_ID, DEVICE_ID, "temperature", 172)
+    assert sensor.native_value == pytest.approx(0.0)

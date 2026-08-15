@@ -13,12 +13,13 @@ from homeassistant.core import callback
 from homeassistant.exceptions import HomeAssistantError
 
 from ..api_resilience import FluidraError
-from ..const import DOMAIN, UI_UPDATE_DELAY
+from ..const import CHLORINATOR_MODE_OPTIMISTIC_TIMEOUT, DOMAIN, UI_UPDATE_DELAY
 from ..device_registry import DeviceIdentifier
 from ..entity import FluidraPoolControlEntity
 
 if TYPE_CHECKING:
     from ..coordinator import FluidraDataUpdateCoordinator
+    from ..fluidra_api import FluidraPoolAPI
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -29,12 +30,11 @@ class FluidraChlorinatorModeSelect(FluidraPoolControlEntity, SelectEntity):
     __slots__ = ("_mode_mapping", "_optimistic_option", "_optimistic_time", "_value_to_mode")
 
     # Keep optimistic value until API confirms (or this many seconds pass).
-    OPTIMISTIC_TIMEOUT = 120
 
     def __init__(
         self,
         coordinator: FluidraDataUpdateCoordinator,
-        api,
+        api: FluidraPoolAPI,
         pool_id: str,
         device_id: str,
     ) -> None:
@@ -69,11 +69,12 @@ class FluidraChlorinatorModeSelect(FluidraPoolControlEntity, SelectEntity):
             mode_value = int(mode_value)
         except (ValueError, TypeError):
             mode_value = 0
-        return self._value_to_mode.get(mode_value, "off")
+        mode: str = self._value_to_mode.get(mode_value, "off")
+        return mode
 
     def _optimistic_expired(self) -> bool:
         """Return True once the optimistic value has outlived its timeout."""
-        return time.time() - self._optimistic_time > self.OPTIMISTIC_TIMEOUT
+        return time.time() - self._optimistic_time > CHLORINATOR_MODE_OPTIMISTIC_TIMEOUT
 
     @property
     def current_option(self) -> str | None:
@@ -97,6 +98,7 @@ class FluidraChlorinatorModeSelect(FluidraPoolControlEntity, SelectEntity):
 
     async def async_select_option(self, option: str) -> None:
         """Select new mode option."""
+        self._ensure_pool_writable()
         if option not in self._mode_mapping:
             return
 
@@ -121,6 +123,7 @@ class FluidraChlorinatorModeSelect(FluidraPoolControlEntity, SelectEntity):
         else:
             self._optimistic_option = None
             self.async_write_ha_state()
+            raise HomeAssistantError(translation_domain=DOMAIN, translation_key="chlorinator_mode_set_failed")
 
     @property
     def icon(self) -> str:

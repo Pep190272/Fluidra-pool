@@ -12,6 +12,7 @@ from custom_components.fluidra_pool.api_resilience import (
     FluidraCircuitBreakerError,
     FluidraConnectionError,
 )
+from custom_components.fluidra_pool.fluidra_api._constants import USER_POOLS_ENDPOINT
 from custom_components.fluidra_pool.fluidra_api._devices import DevicesMixin
 
 
@@ -77,14 +78,48 @@ async def test_async_update_data_keeps_state_unchanged_on_request_error() -> Non
 async def test_async_update_data_skips_pool_devices_when_inner_call_fails() -> None:
     """A device discovery failure for one pool doesn't break the rest."""
     api = _FakeAPI()
-    api._request.side_effect = [
-        (200, [{"id": "pool_1"}, {"id": "pool_2"}], "[]"),
-        FluidraConnectionError("fail for pool_1"),  # _discover_devices_for_pool raises.
-        (200, [{"id": "DEV-2", "info": {"name": "Pump", "family": "pump"}, "type": "connected"}], "[]"),
-    ]
+
+    async def _request(method, url, **kwargs):
+        if url == USER_POOLS_ENDPOINT:
+            return (200, [{"id": "pool_1"}, {"id": "pool_2"}], "[]")
+        if kwargs.get("params", {}).get("poolId") == "pool_1":
+            raise FluidraConnectionError("fail for pool_1")
+        return (200, [{"id": "DEV-2", "info": {"name": "Pump", "family": "pump"}, "type": "connected"}], "[]")
+
+    api._request = _request
     await api.async_update_data()
     # pool_2's devices were still discovered.
     assert any(d["device_id"] == "DEV-2" for d in api.devices)
+
+
+async def test_async_update_data_discovers_pools_concurrently() -> None:
+    """Per-pool device discovery runs in parallel (boot critical path).
+
+    Each pool's device fetch blocks on an event released by the other pool's
+    *entry*. If the pools were discovered one after another, the second fetch
+    would never start and the call would deadlock (the 2s cap turns that into
+    a failure).
+    """
+    import asyncio
+
+    api = _FakeAPI()
+    pool_1_entered = asyncio.Event()
+    pool_2_entered = asyncio.Event()
+
+    async def _request(method, url, **kwargs):
+        if url == USER_POOLS_ENDPOINT:
+            return (200, [{"id": "pool_1"}, {"id": "pool_2"}], "[]")
+        # Device-tree fetch for a pool: block until the sibling pool entered too.
+        pool_id = kwargs.get("params", {}).get("poolId")
+        event = pool_1_entered if pool_id == "pool_1" else pool_2_entered
+        event.set()
+        other = pool_2_entered if pool_id == "pool_1" else pool_1_entered
+        await other.wait()
+        return (200, [{"id": f"DEV-{pool_id}", "info": {"name": "Pump", "family": "pump"}, "type": "connected"}], "[]")
+
+    api._request = _request
+    await asyncio.wait_for(api.async_update_data(), timeout=2)
+    assert {d["device_id"] for d in api.devices} == {"DEV-pool_1", "DEV-pool_2"}
 
 
 # --- _discover_devices_for_pool ------------------------------------------
@@ -198,16 +233,25 @@ async def test_discover_devices_bridged_non_pump_child_not_variable_speed() -> N
     assert devices[0]["variable_speed"] is False
 
 
-async def test_discover_devices_marks_offline_when_connection_type_not_connected() -> None:
-    """A `type` other than "connected" results in online=False."""
+async def test_discover_devices_online_tristate_from_connection_type() -> None:
+    """Only explicit connected/disconnected map to True/False; anything else is unknown (None)."""
     api = _FakeAPI()
     api._request.return_value = (
         200,
-        [{"id": "DEV-OFF", "info": {"name": "Pump", "family": "pump"}, "type": "offline"}],
+        [
+            {"id": "DEV-ON", "info": {"name": "Pump", "family": "pump"}, "type": "connected"},
+            {"id": "DEV-OFF", "info": {"name": "Pump", "family": "pump"}, "type": "disconnected"},
+            {"id": "DEV-UNK", "info": {"name": "Pump", "family": "pump"}, "type": "offline"},
+            {"id": "DEV-NONE", "info": {"name": "Pump", "family": "pump"}},
+        ],
         "[]",
     )
     devices = await api._discover_devices_for_pool("pool_1", {})
-    assert devices[0]["online"] is False
+    by_id = {d["device_id"]: d for d in devices}
+    assert by_id["DEV-ON"]["online"] is True
+    assert by_id["DEV-OFF"]["online"] is False
+    assert by_id["DEV-UNK"]["online"] is None
+    assert by_id["DEV-NONE"]["online"] is None
 
 
 # --- issue #69: de-duplicate offline/connected duplicate entries ---------
@@ -345,14 +389,6 @@ async def test_cached_pools_returns_last_get_pools_result_without_api_call() -> 
     api._pools = [{"id": "cached"}]
     assert api.cached_pools == [{"id": "cached"}]
     api._request.assert_not_called()
-
-
-async def test_get_pool_by_id_returns_matching_pool_or_none() -> None:
-    """O(n) lookup in the cached pools list."""
-    api = _FakeAPI()
-    api._pools = [{"id": "pool_1"}, {"id": "pool_2"}]
-    assert api.get_pool_by_id("pool_2") == {"id": "pool_2"}
-    assert api.get_pool_by_id("missing") is None
 
 
 async def test_get_device_by_id_searches_across_all_pools() -> None:
@@ -502,33 +538,32 @@ async def test_get_pool_details_partial_success_returns_what_we_have() -> None:
     assert result == {"name": "Pool One"}
 
 
-# --- get_user_pools ------------------------------------------------------
+# --- poll_pool_device_statuses --------------------------------------------
 
 
-async def test_get_user_pools_returns_list_on_200() -> None:
-    """The list response is forwarded as-is."""
+async def test_poll_pool_device_statuses_maps_parents_and_children() -> None:
+    """One tree fetch returns statuses for parents and bridged children (Issue #140)."""
     api = _FakeAPI()
-    api._request.return_value = (200, [{"id": "pool_1"}], "[]")
-    assert await api.get_user_pools() == [{"id": "pool_1"}]
+    api._request.return_value = (
+        200,
+        [
+            {"id": "DEV-1", "connectivity": {"connected": True}},
+            {
+                "id": "BRIDGE-1",
+                "devices": [{"id": "BRIDGE-1.nn_1", "connectivity": {"connected": False}}],
+            },
+        ],
+        "[]",
+    )
+    result = await api.poll_pool_device_statuses("pool_1")
+    assert result is not None
+    assert set(result) == {"DEV-1", "BRIDGE-1", "BRIDGE-1.nn_1"}
+    assert result["BRIDGE-1.nn_1"]["connectivity"] == {"connected": False}
+    assert api._request.await_count == 1
 
 
-async def test_get_user_pools_returns_none_on_non_list_response() -> None:
-    """A dict-shaped response (legacy) is treated as no-data."""
+async def test_poll_pool_device_statuses_returns_none_on_non_200() -> None:
+    """A non-200 response yields None so callers keep previous data."""
     api = _FakeAPI()
-    api._request.return_value = (200, {"pools": [{"id": "pool_1"}]}, "{}")
-    assert await api.get_user_pools() is None
-
-
-async def test_get_user_pools_returns_none_on_request_error() -> None:
-    """Connection errors → None."""
-    api = _FakeAPI()
-    api._request.side_effect = FluidraConnectionError("boom")
-    assert await api.get_user_pools() is None
-
-
-async def test_get_user_pools_raises_when_not_authenticated() -> None:
-    """No access token → AuthError."""
-    api = _FakeAPI()
-    api.access_token = None
-    with pytest.raises(FluidraAuthError):
-        await api.get_user_pools()
+    api._request.return_value = (503, None, "")
+    assert await api.poll_pool_device_statuses("pool_1") is None

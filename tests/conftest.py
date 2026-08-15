@@ -24,6 +24,12 @@ def enable_custom_integrations(request: pytest.FixtureRequest) -> None:
 def mock_api() -> AsyncMock:
     """Create a mock FluidraPoolAPI."""
     api = AsyncMock(spec=FluidraPoolAPI)
+    # Instance attributes are invisible to spec= (the class is not slotted);
+    # wire the ones production code reads directly.
+    api.access_token = "test-access-token"
+    api.refresh_token = "test-refresh-token"
+    api.token_expires_at = None
+    api.user_id = "test-user-id"
     api.authenticate = AsyncMock(return_value=True)
     api.ensure_valid_token = AsyncMock(return_value=True)
     api.get_pools = AsyncMock(
@@ -48,7 +54,12 @@ def mock_api() -> AsyncMock:
     api.get_pool_details = AsyncMock(return_value={})
     api.poll_water_quality = AsyncMock(return_value={})
     api.poll_device_status = AsyncMock(return_value={"connectivity": {"online": True}})
+    api.poll_pool_device_statuses = AsyncMock(return_value={"E30-001": {"connectivity": {"online": True}}})
     api.get_component_state = AsyncMock(return_value={"reportedValue": 0})
+    # No bulk payload by default: these fixtures exercise the per-component path,
+    # and an AsyncMock's default truthy return would otherwise look like a
+    # successful bulk fetch. Tests that want the bulk path set it explicitly.
+    api.get_all_components = AsyncMock(return_value=None)
     api.set_component_value = AsyncMock(return_value=True)
     api.set_component_string_value = AsyncMock(return_value=True)
     api.close = AsyncMock()

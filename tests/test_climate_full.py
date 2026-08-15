@@ -39,12 +39,15 @@ from custom_components.fluidra_pool.const import (
     Z550_MODE_AUTO,
     Z550_MODE_COOLING,
     Z550_MODE_HEATING,
-    Z550_PRESET_BOOST,
-    Z550_PRESET_SILENCE,
-    Z550_PRESET_SMART,
     Z550_STATE_COOLING,
     Z550_STATE_HEATING,
     Z550_STATE_IDLE,
+    Z550_STATE_NO_FLOW,
+    Z650_PRESET_BOOST,
+    Z650_PRESET_ECOSILENCE,
+    Z650_PRESET_MODES,
+    Z650_PRESET_SMART,
+    Z650_PRESET_SMART_PLUS,
 )
 
 POOL_ID = "pool-1"
@@ -235,9 +238,9 @@ def test_hvac_modes_z260() -> None:
     assert modes == [HVACMode.OFF, HVACMode.HEAT, HVACMode.COOL, HVACMode.HEAT_COOL]
 
 
-def test_preset_modes_z550() -> None:
-    presets = _make(_pin(features={"z550_mode": True})).preset_modes
-    assert presets == [Z550_PRESET_SILENCE, Z550_PRESET_SMART, Z550_PRESET_BOOST]
+def test_preset_modes_z550_empty() -> None:
+    # Z550iQ+ exposes no controllable preset: component 17 is read-only (Issue #88).
+    assert _make(_pin(features={"z550_mode": True})).preset_modes == []
 
 
 def test_preset_modes_lg() -> None:
@@ -253,24 +256,10 @@ def test_preset_modes_empty_default() -> None:
 # --- preset_mode -------------------------------------------------------
 
 
-def test_preset_mode_z550_from_reported_field() -> None:
-    climate = _make(_pin(features={"z550_mode": True}, z550_preset_reported=2))
-    assert climate.preset_mode == Z550_PRESET_BOOST
-
-
-def test_preset_mode_z550_unknown_reported_falls_back_to_smart() -> None:
-    climate = _make(_pin(features={"z550_mode": True}, z550_preset_reported=99))
-    assert climate.preset_mode == Z550_PRESET_SMART
-
-
-def test_preset_mode_z550_from_component_17() -> None:
-    climate = _make(_pin(features={"z550_mode": True}, components={"17": {"reportedValue": 0}}))
-    assert climate.preset_mode == Z550_PRESET_SILENCE
-
-
-def test_preset_mode_z550_default_smart_no_data() -> None:
-    climate = _make(_pin(features={"z550_mode": True}))
-    assert climate.preset_mode == Z550_PRESET_SMART
+def test_preset_mode_z550_none() -> None:
+    # Z550iQ+ has no controllable preset (Issue #88): always None regardless of c17.
+    climate = _make(_pin(features={"z550_mode": True}, z550_preset_reported=2, components={"17": {"reportedValue": 0}}))
+    assert climate.preset_mode is None
 
 
 def test_preset_mode_lg_from_component_14() -> None:
@@ -294,21 +283,21 @@ def test_preset_mode_none_when_unsupported() -> None:
 
 def test_preset_mode_pending_optimistic_within_window() -> None:
     climate = _make(_pin(features={"z550_mode": True}, z550_preset_reported=0))
-    climate._pending_preset_mode = Z550_PRESET_BOOST
+    climate._pending_preset_mode = "boost"
     with patch(TIME_MOD) as mock_time:
         # action time = 1000, now = 1003 (< 5s) -> keep optimistic
         climate._last_preset_action_time = 1000.0
         mock_time.time.return_value = 1003.0
-        assert climate.preset_mode == Z550_PRESET_BOOST
+        assert climate.preset_mode == "boost"
 
 
 def test_preset_mode_pending_optimistic_expires() -> None:
     climate = _make(_pin(features={"z550_mode": True}, z550_preset_reported=0))
-    climate._pending_preset_mode = Z550_PRESET_BOOST
+    climate._pending_preset_mode = "boost"
     with patch(TIME_MOD) as mock_time:
         climate._last_preset_action_time = 1000.0
-        mock_time.time.return_value = 1010.0  # > 5s -> expire, fall through to reported
-        assert climate.preset_mode == Z550_PRESET_SILENCE  # reported 0 -> silence
+        mock_time.time.return_value = 1010.0  # > 5s -> expire, fall through
+        assert climate.preset_mode is None  # Z550 has no controllable preset (Issue #88)
     assert climate._pending_preset_mode is None
     assert climate._last_preset_action_time is None
 
@@ -442,7 +431,7 @@ def test_hvac_mode_lg_fallback_off() -> None:
         (Z550_STATE_HEATING, HVACAction.HEATING),
         (Z550_STATE_COOLING, HVACAction.COOLING),
         (Z550_STATE_IDLE, HVACAction.IDLE),
-        (11, HVACAction.OFF),  # no flow / unknown
+        (Z550_STATE_NO_FLOW, HVACAction.IDLE),  # no flow -> idle (on but blocked, Issue #88)
     ],
 )
 def test_hvac_action_z550(state, expected) -> None:
@@ -467,12 +456,53 @@ def test_hvac_action_z260_no_flow_idle() -> None:
         (5, HVACAction.COOLING),
         (0, HVACAction.HEATING),
         (3, HVACAction.HEATING),
-        (2, HVACAction.IDLE),
+        (2, HVACAction.IDLE),  # Smart H+C without temperatures: deadband fallback
     ],
 )
 def test_hvac_action_z260_by_mode(mode_value, expected) -> None:
     climate = _make(_pin(features={"z260iq_mode": True}, heat_pump_reported=1, z260iq_mode_value=mode_value))
     assert climate.hvac_action == expected
+
+
+@pytest.mark.parametrize(
+    ("water", "target", "expected"),
+    [
+        (24.0, 28.0, HVACAction.HEATING),  # water 4°C below setpoint
+        (30.0, 26.0, HVACAction.COOLING),  # water 4°C above setpoint
+        (27.5, 28.0, HVACAction.IDLE),  # 0.5°C below: inside the ±2.0°C deadband
+        (29.5, 28.0, HVACAction.IDLE),  # 1.5°C above: still idle — the Z250iQ power meter
+        #                                 showed the compressor only engages at +2°C (#139)
+        (26.0, 28.0, HVACAction.IDLE),  # delta exactly 2.0: strict >, stays idle
+        (30.0, 28.0, HVACAction.IDLE),  # delta exactly 2.0 (cooling side): stays idle
+        (25.9, 28.0, HVACAction.HEATING),  # delta 2.1: just past the edge → heating
+        (30.1, 28.0, HVACAction.COOLING),  # delta 2.1: just past the edge → cooling
+    ],
+)
+def test_hvac_action_z260_heat_cool_inferred_from_temp_delta(water, target, expected) -> None:
+    """Smart H+C (c14=2) infers the running direction from the water-vs-setpoint delta (Issue #139)."""
+    climate = _make(
+        _pin(
+            features={"z260iq_mode": True},
+            heat_pump_reported=1,
+            z260iq_mode_value=2,
+            water_temperature=water,
+            target_temperature=target,
+        )
+    )
+    assert climate.hvac_action == expected
+
+
+def test_hvac_action_z260_heat_cool_idle_when_temperature_unknown() -> None:
+    """Missing water or target temperature must fall back to IDLE, not crash."""
+    climate = _make(
+        _pin(
+            features={"z260iq_mode": True},
+            heat_pump_reported=1,
+            z260iq_mode_value=2,
+            # no water_temperature / target_temperature keys
+        )
+    )
+    assert climate.hvac_action == HVACAction.IDLE
 
 
 def test_hvac_action_z260_default_heating_when_on_no_mode() -> None:
@@ -493,10 +523,25 @@ def test_hvac_action_lg_cooling() -> None:
 
 
 def test_hvac_action_lg_heat_cool_idle() -> None:
+    """Without temperatures, LG heat_cool falls back to IDLE (deadband path)."""
     climate = _make(
         _pin(features={"preset_modes": True}, heat_pump_reported=1, components={"14": {"reportedValue": 2}})
     )
     assert climate.hvac_action == HVACAction.IDLE
+
+
+def test_hvac_action_lg_heat_cool_inferred_from_temp_delta() -> None:
+    """LG heat_cool shares the Smart H+C temperature-delta inference (Issue #139)."""
+    climate = _make(
+        _pin(
+            features={"preset_modes": True},
+            heat_pump_reported=1,
+            components={"14": {"reportedValue": 2}},
+            water_temperature=24.0,
+            target_temperature=28.0,
+        )
+    )
+    assert climate.hvac_action == HVACAction.HEATING
 
 
 def test_hvac_action_lg_heating_default() -> None:
@@ -764,12 +809,13 @@ async def test_set_hvac_mode_api_exception_wrapped() -> None:
 # --- async_set_preset_mode ---------------------------------------------
 
 
-async def test_set_preset_mode_z550_valid() -> None:
+async def test_set_preset_mode_z550_noop() -> None:
+    # Z550iQ+ has no controllable preset — set_preset_mode must not write (Issue #88).
     api = _api()
     climate = _make(_pin(features={"z550_mode": True}), api)
-    await climate.async_set_preset_mode(Z550_PRESET_BOOST)
-    api.control_device_component.assert_awaited_once_with(DEVICE_ID, 17, 2)
-    climate.coordinator.async_request_refresh.assert_awaited_once()
+    await climate.async_set_preset_mode("boost")
+    api.control_device_component.assert_not_called()
+    assert climate._pending_preset_mode is None
 
 
 async def test_set_preset_mode_z550_unknown_noop() -> None:
@@ -806,9 +852,9 @@ async def test_set_preset_mode_unsupported_device_noop() -> None:
 async def test_set_preset_mode_api_returns_false_raises() -> None:
     api = _api()
     api.control_device_component = AsyncMock(return_value=False)
-    climate = _make(_pin(features={"z550_mode": True}), api)
+    climate = _make(_pin(features={"preset_modes": True}), api)
     with pytest.raises(HomeAssistantError):
-        await climate.async_set_preset_mode(Z550_PRESET_BOOST)
+        await climate.async_set_preset_mode(LG_PRESET_SMART_HEATING)
     assert climate._pending_preset_mode is None
 
 
@@ -821,6 +867,105 @@ async def test_set_preset_mode_api_exception_wrapped() -> None:
     assert climate._pending_preset_mode is None
 
 
+# --- Z650iQ family (Issue: new profile) --------------------------------
+
+_Z650 = {"z650iq_mode": True, "z260iq_mode": True, "preset_modes": True}
+
+
+def test_z650iq_preset_modes_are_the_app_four() -> None:
+    """Z650iQ exposes its own four presets, not the seven LG ones."""
+    assert _make(_pin(features=_Z650)).preset_modes == Z650_PRESET_MODES
+
+
+@pytest.mark.parametrize(
+    ("raw", "expected"),
+    [
+        (0, Z650_PRESET_SMART_PLUS),
+        (1, Z650_PRESET_BOOST),
+        (2, Z650_PRESET_SMART),
+        (3, Z650_PRESET_ECOSILENCE),
+    ],
+)
+def test_z650iq_preset_mode_from_component_14(raw: int, expected: str) -> None:
+    """c14 uses a different mapping than the Z260iQ (1=Cool/3=Heat there)."""
+    climate = _make(_pin(features=_Z650, components={"14": {"reportedValue": raw}}))
+    assert climate.preset_mode == expected
+
+
+def test_z650iq_preset_mode_defaults_without_component_14() -> None:
+    """No c14 reading yet -> fall back to the family default, not the LG one."""
+    assert _make(_pin(features=_Z650)).preset_mode == Z650_PRESET_SMART_PLUS
+
+
+def test_z650iq_preset_mode_unknown_raw_falls_back() -> None:
+    """An unmapped c14 value must not raise."""
+    climate = _make(_pin(features=_Z650, components={"14": {"reportedValue": 99}}))
+    assert climate.preset_mode == Z650_PRESET_SMART_PLUS
+
+
+async def test_z650iq_set_preset_mode_writes_component_14() -> None:
+    api = _api()
+    climate = _make(_pin(features=_Z650), api)
+    await climate.async_set_preset_mode(Z650_PRESET_BOOST)
+    api.control_device_component.assert_awaited_once_with(DEVICE_ID, 14, 1)
+
+
+async def test_z650iq_set_preset_mode_ignores_unknown_preset() -> None:
+    """An LG-only preset name is not writable on this family."""
+    api = _api()
+    climate = _make(_pin(features=_Z650), api)
+    await climate.async_set_preset_mode(LG_PRESET_SMART_HEATING)
+    api.control_device_component.assert_not_awaited()
+    assert climate._pending_preset_mode is None
+
+
+async def test_z650iq_set_hvac_mode_heat_preserves_ecosilence_preset() -> None:
+    """Re-selecting HEAT while already on Ecosilence must not reset to Smart+.
+
+    async_set_hvac_mode passes the climate entity's *current* preset into the
+    behavior so it can keep it; the caller has to recognize Z650iqBehavior for
+    that plumbing to actually reach it (CodeRabbit finding).
+    """
+    api = _api()
+    climate = _make(_pin(features=_Z650, components={"14": {"reportedValue": 3}}), api)
+    assert climate.preset_mode == Z650_PRESET_ECOSILENCE  # sanity: currently on Ecosilence
+
+    await climate.async_set_hvac_mode(HVACMode.HEAT)
+
+    api.control_device_component.assert_awaited_once_with(DEVICE_ID, 14, 3)  # Ecosilence, not Smart+
+    api.start_pump.assert_awaited_once_with(DEVICE_ID)
+
+
+def test_extra_state_attributes_z650iq_branch() -> None:
+    """The Z650iQ branch reports coordinator-decoded values, not raw registers."""
+    climate = _make(
+        _pin(
+            features=_Z650,
+            heat_pump_reported=1,
+            water_temperature=27.5,
+            air_temperature=23.0,
+            running_hours=72,
+            compressor_running_hours=15,
+            pump_power=642,
+            signal_strength_component=-52,
+            firmware_version_component="1.5.0",
+            no_flow_alarm=False,
+            components={"14": {"reportedValue": 3}},
+        )
+    )
+    attrs = climate.extra_state_attributes
+    assert attrs["heat_pump_on"] is True
+    assert attrs["preset_mode_raw"] == 3
+    assert attrs["water_temperature"] == 27.5
+    assert attrs["air_temperature"] == 23.0
+    assert attrs["running_hours"] == 72
+    assert attrs["compressor_running_hours"] == 15
+    assert attrs["power_w"] == 642
+    assert attrs["rssi_dbm"] == -52
+    assert attrs["firmware"] == "1.5.0"
+    assert attrs["no_flow_alarm"] is False
+
+
 # --- extra_state_attributes --------------------------------------------
 
 
@@ -831,9 +976,13 @@ def test_extra_state_attributes_z550_branch() -> None:
             water_temperature=25.0,
             air_temperature=30.0,
             z550_mode_reported=1,
-            z550_state_reported=2,
-            z550_preset_reported=2,
-            components={"21": {"reportedValue": 1}},
+            z550_state_reported=11,  # no flow
+            running_hours=1234,
+            components={
+                "21": {"reportedValue": 1},
+                "18": {"reportedValue": 1},
+                "60": {"reportedValue": 1234},
+            },
         )
     )
     attrs = climate.extra_state_attributes
@@ -841,8 +990,12 @@ def test_extra_state_attributes_z550_branch() -> None:
     assert attrs["water_temperature"] == 25.0
     assert attrs["air_temperature"] == 30.0
     assert attrs["z550_mode"] == "cooling"
-    assert attrs["z550_state"] == "heating"
-    assert attrs["z550_preset"] == "boost"
+    assert attrs["z550_state"] == "no_flow"
+    assert attrs["no_flow"] is True  # Issue #88
+    assert attrs["running_hours"] == 1234  # component 60
+    assert attrs["component_18_raw"] == 1
+    assert attrs["component_60_raw"] == 1234
+    assert "z550_preset" not in attrs  # presets removed (Issue #88)
     assert attrs["component_21_raw"] == 1
 
 
@@ -898,7 +1051,10 @@ async def test_async_setup_entry_creates_climate_for_heat_pump() -> None:
         cached_pools=[{"id": POOL_ID, "devices": [hp, other]}],
         get_pools=AsyncMock(return_value=[]),
     )
-    entry = SimpleNamespace(runtime_data=SimpleNamespace(coordinator=coordinator))
+    entry = SimpleNamespace(
+        runtime_data=SimpleNamespace(coordinator=coordinator),
+        async_on_unload=lambda _unsub: None,
+    )
 
     added: list = []
 
@@ -920,7 +1076,10 @@ async def test_async_setup_entry_falls_back_to_get_pools() -> None:
         cached_pools=[],
         get_pools=AsyncMock(return_value=[{"id": POOL_ID, "devices": [hp]}]),
     )
-    entry = SimpleNamespace(runtime_data=SimpleNamespace(coordinator=coordinator))
+    entry = SimpleNamespace(
+        runtime_data=SimpleNamespace(coordinator=coordinator),
+        async_on_unload=lambda _unsub: None,
+    )
 
     added: list = []
     async_add = MagicMock(side_effect=lambda e, *a, **k: added.extend(list(e)))
@@ -938,9 +1097,44 @@ async def test_async_setup_entry_no_climate_entities() -> None:
         cached_pools=[{"id": POOL_ID, "devices": [pump]}],
         get_pools=AsyncMock(return_value=[]),
     )
-    entry = SimpleNamespace(runtime_data=SimpleNamespace(coordinator=coordinator))
+    entry = SimpleNamespace(
+        runtime_data=SimpleNamespace(coordinator=coordinator),
+        async_on_unload=lambda _unsub: None,
+    )
 
     added: list = []
     async_add = MagicMock(side_effect=lambda e, *a, **k: added.extend(list(e)))
     await async_setup_entry(MagicMock(), entry, async_add)
     assert added == []
+
+
+async def test_setup_adds_new_device_dynamically() -> None:
+    """dynamic-devices: a heat pump appearing on a later poll is wired without a reload."""
+    hp1 = _pin("HP-DYN-1", entities=["climate"])
+    pool = {"id": POOL_ID, "devices": [hp1]}
+    coordinator = MagicMock()
+    coordinator.api = SimpleNamespace(cached_pools=[pool], get_pools=AsyncMock(return_value=[pool]))
+    coordinator.get_pools_from_data = lambda: [{"id": POOL_ID, "devices": pool["devices"]}]
+    listeners: list[Any] = []
+    coordinator.async_add_listener = lambda cb: listeners.append(cb) or (lambda: None)
+
+    added: list = []
+    entry = SimpleNamespace(
+        runtime_data=SimpleNamespace(coordinator=coordinator),
+        async_on_unload=lambda _unsub: None,
+    )
+    async_add = MagicMock(side_effect=lambda e, *a, **k: added.extend(list(e)))
+    await async_setup_entry(MagicMock(), entry, async_add)
+
+    uids_after_setup = {e.unique_id for e in added}
+    assert any("HP-DYN-1" in u for u in uids_after_setup)
+    assert not any("HP-DYN-2" in u for u in uids_after_setup)
+    assert listeners, "a coordinator update listener must be registered for dynamic devices"
+
+    # A new heat pump shows up on a later poll; firing the listener must wire it.
+    pool["devices"].append(_pin("HP-DYN-2", entities=["climate"]))
+    listeners[0]()
+
+    new_uids = {e.unique_id for e in added} - uids_after_setup
+    assert new_uids, "new device entities should be added without a reload"
+    assert all("HP-DYN-2" in u for u in new_uids), "only the newly-added device's entities are created"

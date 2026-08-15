@@ -11,24 +11,34 @@ availability, edge/None values and the setup wiring.
 
 from __future__ import annotations
 
+from datetime import timedelta
 from types import SimpleNamespace
 from typing import Any
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
+from homeassistant.const import PERCENTAGE
 import pytest
 
+from custom_components.fluidra_pool.const import DOMAIN
 from custom_components.fluidra_pool.sensor import (
     FluidraChlorinatorSensor,
+    FluidraCompressorHoursSensor,
+    FluidraCompressorModulationSensor,
     FluidraDeviceInfoSensor,
     FluidraLightBrightnessSensor,
     FluidraPoolLocationSensor,
     FluidraPoolStatusSensor,
     FluidraPoolWaterQualitySensor,
     FluidraPoolWeatherSensor,
+    FluidraPumpActivitySensor,
+    FluidraPumpFlowSensor,
+    FluidraPumpHeadSensor,
+    FluidraPumpPowerSensor,
     FluidraPumpScheduleSensor,
     FluidraPumpSpeedSensor,
     FluidraRunningHoursSensor,
     FluidraTemperatureSensor,
+    FluidraWifiSignalSensor,
     async_setup_entry,
 )
 
@@ -241,6 +251,79 @@ def test_running_hours_none_when_absent() -> None:
 
 
 # --------------------------------------------------------------------------- #
+# FluidraCompressorHoursSensor (Z650iQ, component 39)                          #
+# --------------------------------------------------------------------------- #
+
+
+def test_compressor_hours_reads_field() -> None:
+    """Compressor hours sensor surfaces the ``compressor_running_hours`` field."""
+    device = _pinned_device(DEVICE_ID, compressor_running_hours=15)
+    sensor = FluidraCompressorHoursSensor(_coord([device]), SimpleNamespace(), POOL_ID, DEVICE_ID)
+    assert sensor.native_value == 15
+    assert sensor._attr_translation_key == "compressor_running_hours"
+
+
+def test_compressor_hours_none_when_absent() -> None:
+    """Absent compressor_running_hours -> None (not confused with running_hours)."""
+    device = _pinned_device(DEVICE_ID, running_hours=999)
+    sensor = FluidraCompressorHoursSensor(_coord([device]), SimpleNamespace(), POOL_ID, DEVICE_ID)
+    assert sensor.native_value is None
+
+
+# --------------------------------------------------------------------------- #
+# FluidraCompressorModulationSensor (Z650iQ, component 32)                     #
+# --------------------------------------------------------------------------- #
+
+
+def test_compressor_modulation_reads_field() -> None:
+    """Modulation surfaces the raw level as a percentage."""
+    device = _pinned_device(DEVICE_ID, compressor_modulation=52)
+    sensor = FluidraCompressorModulationSensor(_coord([device]), SimpleNamespace(), POOL_ID, DEVICE_ID)
+    assert sensor.native_value == 52
+    assert sensor.native_unit_of_measurement == PERCENTAGE
+
+
+def test_compressor_modulation_zero_is_preserved() -> None:
+    """0 means 'compressor off' and must not be swallowed as missing data."""
+    device = _pinned_device(DEVICE_ID, compressor_modulation=0)
+    sensor = FluidraCompressorModulationSensor(_coord([device]), SimpleNamespace(), POOL_ID, DEVICE_ID)
+    assert sensor.native_value == 0
+
+
+def test_compressor_modulation_none_when_absent() -> None:
+    device = _pinned_device(DEVICE_ID)
+    sensor = FluidraCompressorModulationSensor(_coord([device]), SimpleNamespace(), POOL_ID, DEVICE_ID)
+    assert sensor.native_value is None
+
+
+# --------------------------------------------------------------------------- #
+# FluidraWifiSignalSensor                                                      #
+# --------------------------------------------------------------------------- #
+
+
+def test_wifi_signal_reads_rssi() -> None:
+    """RSSI is surfaced as a float in dBm."""
+    device = _pinned_device(DEVICE_ID, signal_strength_component=-52)
+    sensor = FluidraWifiSignalSensor(_coord([device]), SimpleNamespace(), POOL_ID, DEVICE_ID)
+    assert sensor.native_value == -52.0
+    assert sensor._attr_native_unit_of_measurement == "dBm"
+
+
+def test_wifi_signal_none_when_absent() -> None:
+    """No RSSI reported -> None."""
+    device = _pinned_device(DEVICE_ID)
+    sensor = FluidraWifiSignalSensor(_coord([device]), SimpleNamespace(), POOL_ID, DEVICE_ID)
+    assert sensor.native_value is None
+
+
+def test_wifi_signal_none_for_non_numeric() -> None:
+    """A non-numeric reading must not raise, just report unavailable."""
+    device = _pinned_device(DEVICE_ID, signal_strength_component="n/a")
+    sensor = FluidraWifiSignalSensor(_coord([device]), SimpleNamespace(), POOL_ID, DEVICE_ID)
+    assert sensor.native_value is None
+
+
+# --------------------------------------------------------------------------- #
 # FluidraPumpSpeedSensor — mode classification, icon, attributes               #
 # --------------------------------------------------------------------------- #
 
@@ -265,6 +348,41 @@ def test_pump_speed_native_value_classification(device_fields: dict, expected_mo
     device = _pinned_device(DEVICE_ID, **device_fields)
     sensor = FluidraPumpSpeedSensor(_coord([device]), SimpleNamespace(), POOL_ID, DEVICE_ID)
     assert sensor.native_value == expected_mode
+
+
+def test_pump_speed_victoria_running_without_percent_reads_running() -> None:
+    """A Victoria VS pump running under a schedule reports c21=0 (no live %); the
+    speed sensor must read "running", not the misleading "not_running" (Issue #144)."""
+    device = _pinned_device(
+        DEVICE_ID,
+        is_running=True,
+        speed_percent=0,
+        features={"victoria_vs_mode": True},
+        device_type="pump",
+    )
+    sensor = FluidraPumpSpeedSensor(_coord([device]), SimpleNamespace(), POOL_ID, DEVICE_ID)
+    assert sensor.native_value == "running"
+    assert sensor.icon == "mdi:pump"
+
+
+def test_pump_speed_non_victoria_running_without_percent_still_not_running() -> None:
+    """Non-Victoria pumps keep the historical "not_running" for is_running + 0 %."""
+    device = _pinned_device(DEVICE_ID, is_running=True, speed_percent=0, device_type="pump")
+    sensor = FluidraPumpSpeedSensor(_coord([device]), SimpleNamespace(), POOL_ID, DEVICE_ID)
+    assert sensor.native_value == "not_running"
+
+
+def test_pump_speed_victoria_with_percent_classifies_normally() -> None:
+    """A Victoria reporting a live % (e.g. QUICK FUNCTION) still classifies low/medium/high."""
+    device = _pinned_device(
+        DEVICE_ID,
+        is_running=True,
+        speed_percent=95,
+        features={"victoria_vs_mode": True},
+        device_type="pump",
+    )
+    sensor = FluidraPumpSpeedSensor(_coord([device]), SimpleNamespace(), POOL_ID, DEVICE_ID)
+    assert sensor.native_value == "high"
 
 
 def test_pump_speed_icon_off_when_stopped() -> None:
@@ -450,50 +568,42 @@ def test_schedule_parse_cron_time_handles_short_and_bad() -> None:
     assert parsed.minute == 15
 
 
-def test_schedule_get_current_schedule_active_window(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_schedule_get_current_schedule_active_window() -> None:
     """_get_current_schedule returns the schedule whose window contains 'now'."""
-    from datetime import datetime as real_datetime
-    from datetime import time as real_time
+    from datetime import UTC, datetime
 
-    import custom_components.fluidra_pool.sensor.device as device_mod
-
-    class _FixedDateTime(real_datetime):
-        @classmethod
-        def now(cls, tz=None):  # type: ignore[override]
-            return real_datetime(2026, 5, 30, 10, 0, 0)
-
-    monkeypatch.setattr(device_mod, "datetime", _FixedDateTime)
+    fake_now = datetime(2026, 5, 30, 10, 0, 0, tzinfo=UTC)
 
     device = _pinned_device(DEVICE_ID)
     sensor = FluidraPumpScheduleSensor(_coord([device]), SimpleNamespace(), POOL_ID, DEVICE_ID)
     active = _schedule(sched_id="active", start="0 8 * * *", end="0 18 * * *")
     inactive = _schedule(sched_id="inactive", start="0 20 * * *", end="0 22 * * *")
     disabled = _schedule(sched_id="disabled", enabled=False, start="0 9 * * *", end="0 11 * * *")
-    result = sensor._get_current_schedule([disabled, inactive, active])
+    with patch(
+        "custom_components.fluidra_pool.sensor.device.dt_util.now",
+        return_value=fake_now,
+    ):
+        result = sensor._get_current_schedule([disabled, inactive, active])
     assert result is not None
     assert result["id"] == "active"
-    assert isinstance(real_time(10, 0), real_time)
 
 
-def test_schedule_extra_attributes_includes_current_schedule(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_schedule_extra_attributes_includes_current_schedule() -> None:
     """When 'now' is inside an enabled schedule, current_* attrs are populated."""
-    from datetime import datetime as real_datetime
+    from datetime import UTC, datetime
 
-    import custom_components.fluidra_pool.sensor.device as device_mod
-
-    class _FixedDateTime(real_datetime):
-        @classmethod
-        def now(cls, tz=None):  # type: ignore[override]
-            return real_datetime(2026, 5, 30, 10, 0, 0)
-
-    monkeypatch.setattr(device_mod, "datetime", _FixedDateTime)
+    fake_now = datetime(2026, 5, 30, 10, 0, 0, tzinfo=UTC)
 
     device = _pinned_device(
         DEVICE_ID,
         schedule_data=[_schedule(sched_id="now", start="0 8 * * *", end="0 18 * * *", operation="1")],
     )
     sensor = FluidraPumpScheduleSensor(_coord([device]), SimpleNamespace(), POOL_ID, DEVICE_ID)
-    attrs = sensor.extra_state_attributes
+    with patch(
+        "custom_components.fluidra_pool.sensor.device.dt_util.now",
+        return_value=fake_now,
+    ):
+        attrs = sensor.extra_state_attributes
     assert attrs["current_schedule_id"] == "now"
     assert attrs["current_time_range"] == "08:00-18:00"
     assert attrs["current_mode"] == "medium (65%)"
@@ -986,7 +1096,10 @@ def _setup_coordinator(devices: list[dict]) -> Any:
 
 
 async def _run_setup(coordinator: Any) -> list[Any]:
-    entry = SimpleNamespace(runtime_data=SimpleNamespace(coordinator=coordinator))
+    entry = SimpleNamespace(
+        runtime_data=SimpleNamespace(coordinator=coordinator),
+        async_on_unload=lambda _unsub: None,
+    )
     added: list[Any] = []
 
     def _add(entities, *a, **k):
@@ -995,6 +1108,40 @@ async def _run_setup(coordinator: Any) -> list[Any]:
     async_add = MagicMock(side_effect=_add)
     await async_setup_entry(MagicMock(), entry, async_add)
     return added
+
+
+async def test_setup_adds_new_device_dynamically() -> None:
+    """dynamic-devices: a device appearing on a later poll is wired without a reload."""
+    dev1 = _pinned_device("dev1", entities=["sensor_info"], device_type="pump")
+    pool = {"id": POOL_ID, "name": "Pool", "devices": [dev1]}
+    coordinator = MagicMock()
+    coordinator.data = {POOL_ID: pool}
+    coordinator.last_update_success = True
+    coordinator.api = SimpleNamespace(cached_pools=[pool], get_pools=AsyncMock(return_value=[pool]))
+    coordinator.get_pools_from_data = lambda: [{"id": POOL_ID, **coordinator.data[POOL_ID]}]
+    listeners: list[Any] = []
+    coordinator.async_add_listener = lambda cb: listeners.append(cb) or (lambda: None)
+
+    added: list[Any] = []
+    entry = SimpleNamespace(
+        runtime_data=SimpleNamespace(coordinator=coordinator),
+        async_on_unload=lambda _unsub: None,
+    )
+    async_add = MagicMock(side_effect=lambda ents, *a, **k: added.extend(list(ents)))
+    await async_setup_entry(MagicMock(), entry, async_add)
+
+    uids_after_setup = {e.unique_id for e in added}
+    assert any("dev1" in u for u in uids_after_setup)
+    assert not any("dev2" in u for u in uids_after_setup)
+    assert listeners, "a coordinator update listener must be registered for dynamic devices"
+
+    # A new device shows up on a later poll; firing the listener must wire it.
+    pool["devices"].append(_pinned_device("dev2", entities=["sensor_info"], device_type="pump"))
+    listeners[0]()
+
+    new_uids = {e.unique_id for e in added} - uids_after_setup
+    assert new_uids, "new device entities should be added without a reload"
+    assert all("dev2" in u for u in new_uids), "only the newly-added device's entities are created"
 
 
 async def test_setup_creates_pool_level_sensors_always() -> None:
@@ -1028,6 +1175,9 @@ async def test_setup_creates_device_level_sensors_per_entities_flags() -> None:
             "sensor_speed",
             "sensor_brightness",
             "sensor_running_hours",
+            "sensor_compressor_hours",
+            "sensor_compressor_modulation",
+            "sensor_wifi_signal",
         ],
     )
     coordinator = _setup_coordinator([device])
@@ -1038,6 +1188,9 @@ async def test_setup_creates_device_level_sensors_per_entities_flags() -> None:
     assert FluidraPumpSpeedSensor in classes
     assert FluidraLightBrightnessSensor in classes
     assert FluidraRunningHoursSensor in classes
+    assert FluidraCompressorHoursSensor in classes
+    assert FluidraCompressorModulationSensor in classes
+    assert FluidraWifiSignalSensor in classes
 
 
 async def test_setup_temperature_target_only() -> None:
@@ -1091,6 +1244,113 @@ async def test_setup_chlorinator_creates_measurement_sensors() -> None:
     assert len(chlor) == 3
 
 
+# --------------------------------------------------------------------------- #
+# FluidraChlorinatorSensor — divisor override, device_data, device_info, attrs #
+# --------------------------------------------------------------------------- #
+
+
+def test_chlorinator_custom_divisor_overrides_default() -> None:
+    """A `sensor_divisors` feature overrides the per-type default divisor (line 112)."""
+    # Default ph divisor is 100; override it to 50 via the device registry feature.
+    device = _pinned_device(
+        DEVICE_ID,
+        device_type="chlorinator",
+        features={"sensor_divisors": {"ph": 50}},
+        components={"165": {"reportedValue": 360}},
+    )
+    sensor = FluidraChlorinatorSensor(_coord([device]), SimpleNamespace(), POOL_ID, DEVICE_ID, "ph", 165)
+    assert sensor._divisor == 50
+    # 360 / 50 = 7.2 (would be 3.6 with the default divisor of 100).
+    assert sensor.native_value == pytest.approx(7.2)
+
+
+def test_chlorinator_custom_divisor_ignored_for_other_types() -> None:
+    """A `sensor_divisors` map that doesn't list this type leaves the default in place."""
+    device = _pinned_device(
+        DEVICE_ID,
+        device_type="chlorinator",
+        features={"sensor_divisors": {"orp": 2}},
+        components={"165": {"reportedValue": 731}},
+    )
+    sensor = FluidraChlorinatorSensor(_coord([device]), SimpleNamespace(), POOL_ID, DEVICE_ID, "ph", 165)
+    # ph not in the override map -> keeps default divisor 100.
+    assert sensor._divisor == 100
+    assert sensor.native_value == pytest.approx(7.31)
+
+
+def test_chlorinator_device_data_empty_when_coordinator_data_none() -> None:
+    """device_data degrades to {} when coordinator.data is None (line 118)."""
+    coord = MagicMock()
+    coord.data = None
+    coord.last_update_success = True
+    sensor = FluidraChlorinatorSensor(coord, SimpleNamespace(), POOL_ID, DEVICE_ID, "ph", 165)
+    assert sensor.device_data == {}
+    assert sensor.native_value is None
+    assert sensor.available is False
+
+
+def test_chlorinator_device_data_empty_when_device_not_found() -> None:
+    """device_data returns {} when the pool exists but the device_id isn't present (line 125)."""
+    other = _pinned_device("OTHER-DEV", device_type="chlorinator", components={"165": {"reportedValue": 720}})
+    sensor = FluidraChlorinatorSensor(_coord([other]), SimpleNamespace(), POOL_ID, DEVICE_ID, "ph", 165)
+    assert sensor.device_data == {}
+    assert sensor.native_value is None
+
+
+def test_chlorinator_device_info_uses_device_name_and_manufacturer() -> None:
+    """device_info pulls the device name + manufacturer from the payload (lines 130-131)."""
+    device = _pinned_device(
+        DEVICE_ID,
+        device_type="chlorinator",
+        components={"165": {"reportedValue": 720}},
+        name="Salt Cell",
+        manufacturer="Hayward",
+    )
+    sensor = FluidraChlorinatorSensor(_coord([device]), SimpleNamespace(), POOL_ID, DEVICE_ID, "ph", 165)
+    info = sensor.device_info
+    assert info["name"] == "Salt Cell"
+    assert info["manufacturer"] == "Hayward"
+    assert info["model"] == "Chlorinator"
+    assert (DOMAIN, DEVICE_ID) in info["identifiers"]
+    assert info["via_device"] == (DOMAIN, POOL_ID)
+
+
+def test_chlorinator_device_info_falls_back_to_generated_name() -> None:
+    """A device without a name falls back to 'Chlorinator <id>' and the default manufacturer."""
+    device = _pinned_device(DEVICE_ID, device_type="chlorinator", components={"165": {"reportedValue": 720}})
+    device.pop("name", None)
+    sensor = FluidraChlorinatorSensor(_coord([device]), SimpleNamespace(), POOL_ID, DEVICE_ID, "ph", 165)
+    info = sensor.device_info
+    assert info["name"] == f"Chlorinator {DEVICE_ID}"
+    assert info["manufacturer"] == "Fluidra"
+
+
+def test_chlorinator_extra_state_attributes() -> None:
+    """extra_state_attributes exposes component id, type, raw value and divisor (lines 171-174)."""
+    device = _pinned_device(
+        DEVICE_ID,
+        device_type="chlorinator",
+        components={"170": {"reportedValue": 654}},
+    )
+    sensor = FluidraChlorinatorSensor(_coord([device]), SimpleNamespace(), POOL_ID, DEVICE_ID, "orp", 170)
+    attrs = sensor.extra_state_attributes
+    assert attrs["component_id"] == 170
+    assert attrs["sensor_type"] == "orp"
+    assert attrs["raw_value"] == 654
+    assert attrs["divisor"] == 1
+    assert attrs["device_id"] == DEVICE_ID
+
+
+def test_chlorinator_extra_state_attributes_raw_value_none_when_missing() -> None:
+    """When the component is absent, raw_value is None but the other keys still populate."""
+    device = _pinned_device(DEVICE_ID, device_type="chlorinator", components={})
+    sensor = FluidraChlorinatorSensor(_coord([device]), SimpleNamespace(), POOL_ID, DEVICE_ID, "ph", 165)
+    attrs = sensor.extra_state_attributes
+    assert attrs["raw_value"] is None
+    assert attrs["component_id"] == 165
+    assert attrs["divisor"] == 100
+
+
 async def test_setup_falls_back_to_get_pools_when_no_cache() -> None:
     """When cached_pools is empty, setup awaits api.get_pools()."""
     device = _pinned_device(DEVICE_ID, entities=["sensor_info"])
@@ -1105,3 +1365,309 @@ async def test_setup_falls_back_to_get_pools_when_no_cache() -> None:
     added = await _run_setup(coordinator)
     coordinator.api.get_pools.assert_awaited_once()
     assert any(isinstance(e, FluidraDeviceInfoSensor) for e in added)
+
+
+# --------------------------------------------------------------------------- #
+# Victoria VS read-side sensors (Issue #144) — power, head, speed attributes   #
+# --------------------------------------------------------------------------- #
+
+
+def test_pump_power_sensor_reports_watts() -> None:
+    """pump_power (Victoria c22) is exposed as a W measurement."""
+    device = _pinned_device(DEVICE_ID, pump_power=719)
+    sensor = FluidraPumpPowerSensor(_coord([device]), SimpleNamespace(), POOL_ID, DEVICE_ID)
+    assert sensor.native_value == 719
+    assert sensor.native_unit_of_measurement == "W"
+    assert sensor.unique_id == f"{DOMAIN}_{POOL_ID}_{DEVICE_ID}_sensor_power"
+
+
+def test_pump_power_sensor_none_until_reported() -> None:
+    device = _pinned_device(DEVICE_ID)
+    sensor = FluidraPumpPowerSensor(_coord([device]), SimpleNamespace(), POOL_ID, DEVICE_ID)
+    assert sensor.native_value is None
+
+
+def test_pump_head_sensor_reports_metres() -> None:
+    """pump_head (Victoria c24, converted cm → m by the coordinator)."""
+    device = _pinned_device(DEVICE_ID, pump_head=11.97)
+    sensor = FluidraPumpHeadSensor(_coord([device]), SimpleNamespace(), POOL_ID, DEVICE_ID)
+    assert sensor.native_value == 11.97
+    assert sensor.native_unit_of_measurement == "m"
+    assert sensor.unique_id == f"{DOMAIN}_{POOL_ID}_{DEVICE_ID}_sensor_head"
+
+
+def test_pump_head_sensor_none_until_reported() -> None:
+    device = _pinned_device(DEVICE_ID)
+    sensor = FluidraPumpHeadSensor(_coord([device]), SimpleNamespace(), POOL_ID, DEVICE_ID)
+    assert sensor.native_value is None
+
+
+def test_pump_flow_sensor_reports_cubic_metres_per_hour() -> None:
+    """pump_flow (Victoria c25) is exposed as a m³/h volume-flow measurement."""
+    device = _pinned_device(DEVICE_ID, pump_flow=7.2)
+    sensor = FluidraPumpFlowSensor(_coord([device]), SimpleNamespace(), POOL_ID, DEVICE_ID)
+    assert sensor.native_value == 7.2
+    assert sensor.native_unit_of_measurement == "m³/h"
+    assert sensor.unique_id == f"{DOMAIN}_{POOL_ID}_{DEVICE_ID}_sensor_flow"
+
+
+def test_pump_flow_sensor_none_until_reported() -> None:
+    device = _pinned_device(DEVICE_ID)
+    sensor = FluidraPumpFlowSensor(_coord([device]), SimpleNamespace(), POOL_ID, DEVICE_ID)
+    assert sensor.native_value is None
+
+
+def test_pump_speed_attributes_include_victoria_setpoint() -> None:
+    """Victoria pumps surface mode + setpoint (SPEED % or FLOW m³/h) as attributes."""
+    device = _pinned_device(
+        DEVICE_ID,
+        is_running=True,
+        speed_percent=62,
+        pump_mode="QUICK FUNCTION",
+        pump_setpoint=7,
+        pump_setpoint_type="FLOW",
+    )
+    sensor = FluidraPumpSpeedSensor(_coord([device]), SimpleNamespace(), POOL_ID, DEVICE_ID)
+    attrs = sensor.extra_state_attributes
+    assert attrs["pump_mode"] == "QUICK FUNCTION"
+    assert attrs["setpoint"] == 7
+    assert attrs["setpoint_type"] == "FLOW"
+
+
+def test_pump_speed_attributes_omit_victoria_fields_for_other_pumps() -> None:
+    """Non-Victoria pumps keep the historical attribute set untouched."""
+    device = _pinned_device(DEVICE_ID, is_running=True, speed_percent=40)
+    attrs = FluidraPumpSpeedSensor(_coord([device]), SimpleNamespace(), POOL_ID, DEVICE_ID).extra_state_attributes
+    assert "pump_mode" not in attrs
+    assert "setpoint" not in attrs
+    assert "setpoint_type" not in attrs
+    # Dry-contact inputs are now binary sensors, not speed-sensor attributes (Issue #144).
+    assert "speed_input_low" not in attrs
+
+
+async def test_setup_creates_power_and_head_sensors_when_configured() -> None:
+    """The sensor_power / sensor_head entity keys wire the Victoria telemetry sensors."""
+    device = _pinned_device(
+        DEVICE_ID,
+        entities=["sensor_power", "sensor_head"],
+        device_type="pump",
+    )
+    coordinator = _setup_coordinator([device])
+    added = await _run_setup(coordinator)
+    assert any(isinstance(e, FluidraPumpPowerSensor) for e in added)
+    assert any(isinstance(e, FluidraPumpHeadSensor) for e in added)
+
+
+async def test_setup_creates_flow_sensor_when_configured() -> None:
+    """The sensor_flow entity key wires the Victoria flow-rate sensor."""
+    device = _pinned_device(DEVICE_ID, entities=["sensor_flow"], device_type="pump")
+    coordinator = _setup_coordinator([device])
+    added = await _run_setup(coordinator)
+    assert any(isinstance(e, FluidraPumpFlowSensor) for e in added)
+
+
+# --------------------------------------------------------------------------- #
+# FluidraPumpActivitySensor — transient phases kept out of the speed reading   #
+# --------------------------------------------------------------------------- #
+
+
+def _activity(device: dict) -> FluidraPumpActivitySensor:
+    return FluidraPumpActivitySensor(_coord([device]), SimpleNamespace(), POOL_ID, DEVICE_ID)
+
+
+@pytest.mark.parametrize(
+    ("fields", "expected"),
+    [
+        # Transient phases win over the steady-state mode (Issue #144).
+        ({"component_14_data": {"reportedValue": "PRIMING"}, "pump_mode": "AUTO PRIMING"}, "priming"),
+        ({"component_14_data": {"reportedValue": "CALIBRATION"}, "pump_mode": "PUMP CALIBRATION"}, "calibrating"),
+        # Steady states.
+        ({"component_14_data": {"reportedValue": "RUNNING"}, "pump_mode": "AUTO", "is_running": True}, "scheduled"),
+        (
+            {"component_14_data": {"reportedValue": "RUNNING"}, "pump_mode": "QUICK FUNCTION", "is_running": True},
+            "manual",
+        ),
+        ({"component_14_data": {"reportedValue": "NOT RUNNING"}, "pump_mode": "STOP"}, "stopped"),
+        # Running but an unrecognised mode string → generic running.
+        ({"component_14_data": {"reportedValue": "RUNNING"}, "pump_mode": "SOMETHING", "is_running": True}, "running"),
+    ],
+)
+def test_pump_activity_states(fields: dict, expected: str) -> None:
+    device = _pinned_device(DEVICE_ID, **fields)
+    assert _activity(device).native_value == expected
+
+
+def test_pump_activity_none_without_data() -> None:
+    """No pump strings at all → unknown (None), not a guessed state."""
+    assert _activity(_pinned_device(DEVICE_ID)).native_value is None
+
+
+def test_pump_activity_exposes_quick_function_while_manual() -> None:
+    """c135 name/mode/setpoint surface only while actually in QUICK FUNCTION."""
+    device = _pinned_device(
+        DEVICE_ID,
+        is_running=True,
+        component_14_data={"reportedValue": "RUNNING"},
+        pump_mode="QUICK FUNCTION",
+        pump_quick_function={"duration": "P0", "mode": "SPEED", "name": "MID SPEED", "setpoint": 75},
+    )
+    attrs = _activity(device).extra_state_attributes
+    assert attrs["quick_function"] == "MID SPEED"
+    assert attrs["quick_function_mode"] == "SPEED"
+    assert attrs["quick_function_setpoint"] == 75
+    assert "quick_function_remaining_seconds" not in attrs  # untimed (P0), no expiry
+
+
+def test_pump_activity_hides_stale_quick_function_during_schedule() -> None:
+    """c135 goes stale during an AUTO run, so it must NOT be surfaced then (Issue #144)."""
+    device = _pinned_device(
+        DEVICE_ID,
+        is_running=True,
+        component_14_data={"reportedValue": "RUNNING"},
+        pump_mode="AUTO",
+        pump_quick_function={"duration": "P0", "mode": "FLOW", "name": "5 m3/h", "setpoint": 5},
+    )
+    attrs = _activity(device).extra_state_attributes
+    assert "quick_function" not in attrs
+    assert attrs["operating_mode"] == "AUTO"
+
+
+def test_pump_activity_timed_quick_function_countdown() -> None:
+    """A timed quick function exposes its end time and remaining seconds."""
+    from homeassistant.util import dt as dt_util
+
+    expiry = int(dt_util.utcnow().timestamp()) + 600
+    device = _pinned_device(
+        DEVICE_ID,
+        is_running=True,
+        component_14_data={"reportedValue": "RUNNING"},
+        pump_mode="QUICK FUNCTION",
+        pump_quick_function={"duration": "PT60M", "mode": "SPEED", "name": "CLEAN", "setpoint": 100},
+        pump_quick_function_expiry=expiry,
+    )
+    attrs = _activity(device).extra_state_attributes
+    assert attrs["quick_function"] == "CLEAN"
+    assert 0 < attrs["quick_function_remaining_seconds"] <= 600
+    assert attrs["quick_function_ends_at"].startswith(str(dt_util.utc_from_timestamp(expiry).year))
+
+
+async def test_setup_creates_activity_sensor_when_configured() -> None:
+    """The sensor_activity entity key wires the activity sensor."""
+    device = _pinned_device(DEVICE_ID, entities=["sensor_activity"], device_type="pump")
+    coordinator = _setup_coordinator([device])
+    added = await _run_setup(coordinator)
+    assert any(isinstance(e, FluidraPumpActivitySensor) for e in added)
+
+
+# --------------------------------------------------------------------------- #
+# Schedule-driven runs: name/target/countdown from /schedulers (Issue #144)    #
+# --------------------------------------------------------------------------- #
+
+_SCHEDULER_ENTRY = {
+    "id": "s0",
+    "name": "Filtration matin",
+    "startTime": "0 8 * * 1,2,3,4,5",
+    "duration": 120,
+    "enabled": True,
+    "actions": [{"deviceActions": [{"id": 0, "arguments": [63.0]}]}],
+}
+
+
+def _scheduled_device(**extra: Any) -> dict:
+    device = _pinned_device(
+        DEVICE_ID,
+        is_running=True,
+        component_14_data={"reportedValue": "RUNNING"},
+        pump_mode="AUTO",
+    )
+    device.update(extra)
+    return device
+
+
+def _activity_with_schedulers(device: dict, schedulers: Any) -> FluidraPumpActivitySensor:
+    coord = _coord([device], {"schedulers": schedulers})
+    return FluidraPumpActivitySensor(coord, SimpleNamespace(), POOL_ID, DEVICE_ID)
+
+
+def test_schedule_matched_by_c19_exposes_name_and_target() -> None:
+    """c19 holds the running entry's id; its name and target come from /schedulers."""
+    device = _scheduled_device(pump_active_schedule_id="s0")
+    attrs = _activity_with_schedulers(device, [_SCHEDULER_ENTRY]).extra_state_attributes
+    assert attrs["schedule_name"] == "Filtration matin"
+    assert attrs["schedule_mode"] == "SPEED"
+    assert attrs["schedule_setpoint"] == 63.0
+
+
+def test_schedule_matched_by_running_flag_when_c19_absent() -> None:
+    """Without c19, the entry whose action carries running=true is used."""
+    entry = {**_SCHEDULER_ENTRY, "actions": [{"running": True, "deviceActions": [{"id": 1, "arguments": [6]}]}]}
+    attrs = _activity_with_schedulers(_scheduled_device(), [entry]).extra_state_attributes
+    assert attrs["schedule_name"] == "Filtration matin"
+    assert attrs["schedule_mode"] == "FLOW"  # deviceActions id 1 = flow m³/h
+    assert attrs["schedule_setpoint"] == 6
+
+
+def test_no_schedule_attributes_when_nothing_active() -> None:
+    """Idle (no c19, no running flag) → no schedule attributes at all."""
+    attrs = _activity_with_schedulers(_scheduled_device(), [_SCHEDULER_ENTRY]).extra_state_attributes
+    assert "schedule_name" not in attrs
+
+
+def test_no_schedule_attributes_without_scheduler_list() -> None:
+    """Pools whose schedulers weren't fetched degrade quietly."""
+    device = _scheduled_device(pump_active_schedule_id="s0")
+    attrs = _activity_with_schedulers(device, None).extra_state_attributes
+    assert "schedule_name" not in attrs
+
+
+def test_schedule_remaining_seconds_counts_down_within_the_window() -> None:
+    """Remaining time is computed client-side from startTime + duration."""
+    from homeassistant.util import dt as dt_util
+
+    now = dt_util.now()
+    # A 60 min window that started 10 min ago → ~50 min left.
+    entry = {
+        **_SCHEDULER_ENTRY,
+        "startTime": f"{(now - timedelta(minutes=10)).minute} {(now - timedelta(minutes=10)).hour} * * *",
+        "duration": 60,
+    }
+    device = _scheduled_device(pump_active_schedule_id="s0")
+    attrs = _activity_with_schedulers(device, [entry]).extra_state_attributes
+    assert 45 * 60 <= attrs["schedule_remaining_seconds"] <= 50 * 60
+
+
+def test_schedule_remaining_absent_for_unusable_timing() -> None:
+    """A malformed or zero-duration entry exposes no countdown rather than a wrong one."""
+    device = _scheduled_device(pump_active_schedule_id="s0")
+    for bad in ({"startTime": "", "duration": 60}, {"startTime": "0 8 * * *", "duration": 0}):
+        entry = {**_SCHEDULER_ENTRY, **bad}
+        attrs = _activity_with_schedulers(device, [entry]).extra_state_attributes
+        assert "schedule_remaining_seconds" not in attrs
+
+
+def test_schedule_target_absent_when_actions_malformed() -> None:
+    """A broken actions payload still yields the name, just no target."""
+    entry = {**_SCHEDULER_ENTRY, "actions": [{"deviceActions": [{"id": 99, "arguments": [1]}]}]}
+    device = _scheduled_device(pump_active_schedule_id="s0")
+    attrs = _activity_with_schedulers(device, [entry]).extra_state_attributes
+    assert attrs["schedule_name"] == "Filtration matin"
+    assert "schedule_mode" not in attrs
+
+
+def test_schedule_resolution_survives_malformed_entries() -> None:
+    """Junk in the schedulers list is skipped rather than crashing the sensor."""
+    device = _scheduled_device()
+    schedulers = [
+        "not-a-dict",
+        {"id": "s1", "actions": "not-a-list"},
+        {"id": "s2", "actions": ["not-a-dict"]},
+        {"id": "s3", "actions": [{"running": True, "deviceActions": ["junk", {"id": 0}, {"id": 0, "arguments": []}]}]},
+    ]
+    attrs = _activity_with_schedulers(device, schedulers).extra_state_attributes
+    # s3 matched on running=true, but none of its actions carry a usable target.
+    assert attrs["schedule_name"] is None or "schedule_mode" not in attrs
+
+
+def test_schedule_target_none_when_actions_not_a_list() -> None:
+    """A non-list actions payload yields no target instead of raising."""
+    assert FluidraPumpActivitySensor._scheduler_target({"actions": "nope"}) == (None, None)

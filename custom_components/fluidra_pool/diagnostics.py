@@ -46,6 +46,11 @@ TO_REDACT = {
 TO_REDACT_LOWER = {key.lower() for key in TO_REDACT}
 REDACTED = "**REDACTED**"
 
+# The raw device tree entry stored under device["status"] carries the device
+# serial in its "id" field (and in nested bridge children under "devices[].id").
+# "id" must NOT go into the global TO_REDACT: schedule/job ids would be lost.
+TO_REDACT_STATUS = TO_REDACT | {"id"}
+
 # Components that typically carry device identifiers (serial, MAC, IP, SKU).
 # Their `reportedValue`/`desiredValue` strings are redacted regardless of the device
 # family — these slots are reserved for telemetry-metadata on the Fluidra cloud:
@@ -113,7 +118,7 @@ async def async_get_config_entry_diagnostics(hass: HomeAssistant, entry: Fluidra
     }
 
 
-def _redact_pools_data(pools_data: dict) -> dict:
+def _redact_pools_data(pools_data: dict[str, Any]) -> dict[str, Any]:
     """Redact sensitive information from pools data."""
     if not pools_data:
         return {}
@@ -133,6 +138,10 @@ def _redact_pools_data(pools_data: dict) -> dict:
                 elif key == "water_quality":
                     # Water-quality telemetry is useful for debugging algorithms.
                     redacted_pool[key] = value
+                elif key == "id":
+                    # The pool id is already anonymised in the dict key
+                    # (pool_XXXX) — keeping it in the value defeats that.
+                    redacted_pool[key] = REDACTED
                 elif isinstance(value, dict):
                     redacted_pool[key] = async_redact_data(value, TO_REDACT)
                 else:
@@ -145,12 +154,12 @@ def _redact_pools_data(pools_data: dict) -> dict:
     return redacted
 
 
-def _redact_devices_data(devices: list) -> list:
+def _redact_devices_data(devices: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """Redact sensitive information from devices data."""
     if not devices:
         return []
 
-    redacted_devices = []
+    redacted_devices: list[dict[str, Any]] = []
     for i, device in enumerate(devices):
         if isinstance(device, dict):
             redacted_device: dict[str, Any] = {}
@@ -165,6 +174,11 @@ def _redact_devices_data(devices: list) -> list:
                 elif key in _IDENTIFIER_DEVICE_FIELDS:
                     # Mirror of an identifier-bearing component — always redact strings.
                     redacted_device[key] = REDACTED if isinstance(value, str) else value
+                elif key == "status" and isinstance(value, dict):
+                    # Raw tree entry: its "id" (and children "devices[].id") is
+                    # the device serial — redact it (async_redact_data recurses
+                    # into nested lists/dicts).
+                    redacted_device[key] = async_redact_data(value, TO_REDACT_STATUS)
                 elif isinstance(value, dict):
                     redacted_device[key] = async_redact_data(value, TO_REDACT)
                 elif isinstance(value, list):
@@ -181,7 +195,7 @@ def _redact_devices_data(devices: list) -> list:
     return redacted_devices
 
 
-def _redact_component_data(component_id: Any, component: dict) -> dict:
+def _redact_component_data(component_id: Any, component: dict[str, Any]) -> dict[str, Any]:
     """Redact a component dict.
 
     Telemetry components (pH, ORP, temperature, speed, schedules, …) are NOT

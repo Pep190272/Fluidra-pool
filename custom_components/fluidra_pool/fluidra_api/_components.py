@@ -10,7 +10,7 @@ from ..api_resilience import FluidraAuthError, FluidraCircuitBreakerError, Fluid
 from ..const import COMPONENT_AUTO_MODE, COMPONENT_PUMP_ONOFF
 from ..utils import mask_device_id
 from ._base import FluidraAPIBase
-from ._constants import FLUIDRA_EMEA_BASE
+from ._constants import CONNECTED_PARAMS, FLUIDRA_EMEA_BASE
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -25,7 +25,7 @@ class ComponentsMixin(FluidraAPIBase):
 
         headers = self._build_auth_headers()
         url = f"{FLUIDRA_EMEA_BASE}/generic/devices/{quote(str(device_id), safe='')}/components/{int(component_id)}"
-        params = {"deviceType": "connected"}
+        params = dict(CONNECTED_PARAMS)
 
         try:
             status, data, _ = await self._request("GET", url, headers=headers, params=params)
@@ -37,9 +37,81 @@ class ComponentsMixin(FluidraAPIBase):
             return data
         return None
 
-    async def get_device_component_state(self, device_id: str, component_id: int) -> dict[str, Any] | None:
-        """Return the state of a device component (backward-compatible alias)."""
-        return await self.get_component_state(device_id, component_id)
+    async def get_all_components(self, device_id: str) -> dict[int, dict[str, Any]] | None:
+        """Fetch every component of a device in one request.
+
+        This is the endpoint the official app uses (Issue #144, @renaatski):
+        ``GET /generic/devices/{id}/components?deviceType=connected&details=true``.
+        One call replaces the per-component fan-out, which cuts request volume
+        (and the HTTP 429 rate-limiting it caused — Issue #63) and makes the wider
+        register ranges affordable to poll.
+
+        Returns ``{component_id: state}``, or ``None`` when the request failed or
+        the payload wasn't in a shape we recognise, so callers can fall back to
+        per-component reads.
+        """
+        if not self.access_token:
+            raise FluidraAuthError("Not authenticated")
+
+        headers = self._build_auth_headers()
+        url = f"{FLUIDRA_EMEA_BASE}/generic/devices/{quote(str(device_id), safe='')}/components"
+        params = dict(CONNECTED_PARAMS) | {"details": "true"}
+
+        try:
+            status, data, _ = await self._request("GET", url, headers=headers, params=params)
+        except FluidraError as err:
+            _LOGGER.debug("Bulk component fetch failed for %s: %s", mask_device_id(device_id), err)
+            return None
+
+        if status != 200:
+            _LOGGER.debug(
+                "Bulk component fetch for %s returned HTTP %s",
+                mask_device_id(device_id),
+                status,
+            )
+            return None
+
+        return self._parse_bulk_components(data)
+
+    @staticmethod
+    def _parse_bulk_components(data: Any) -> dict[int, dict[str, Any]] | None:
+        """Normalise a bulk-components payload into ``{component_id: state}``.
+
+        The exact envelope isn't contractually documented, so accept the shapes it
+        can plausibly take — a bare list of component objects, a ``{"components":
+        [...]}`` wrapper, or an id-keyed mapping — and return ``None`` for anything
+        unrecognised rather than silently yielding an empty scan (which the caller
+        would mistake for "device has no components").
+        """
+        entries: Any = data
+        if isinstance(data, dict):
+            # Either a wrapper around the list, or already an id-keyed mapping.
+            if isinstance(data.get("components"), list):
+                entries = data["components"]
+            else:
+                mapping: dict[int, dict[str, Any]] = {}
+                for key, value in data.items():
+                    if not isinstance(value, dict):
+                        continue
+                    try:
+                        mapping[int(key)] = value
+                    except (TypeError, ValueError):
+                        continue
+                return mapping or None
+
+        if not isinstance(entries, list):
+            return None
+
+        states: dict[int, dict[str, Any]] = {}
+        for entry in entries:
+            if not isinstance(entry, dict):
+                continue
+            raw_id = entry.get("id")
+            try:
+                states[int(raw_id)] = entry  # type: ignore[arg-type]
+            except (TypeError, ValueError):
+                continue
+        return states or None
 
     async def control_device_component(
         self, device_id: str, component_id: int, value: int | str | dict[str, Any]
@@ -54,14 +126,13 @@ class ComponentsMixin(FluidraAPIBase):
         headers = self._build_auth_headers()
         headers["content-type"] = "application/json; charset=utf-8"
 
-        url = (
-            f"{FLUIDRA_EMEA_BASE}/generic/devices/{quote(str(device_id), safe='')}"
-            f"/components/{int(component_id)}?deviceType=connected"
-        )
+        url = f"{FLUIDRA_EMEA_BASE}/generic/devices/{quote(str(device_id), safe='')}/components/{int(component_id)}"
         payload = {"desiredValue": value}
 
         try:
-            status, data, raw_text = await self._request("PUT", url, headers=headers, json_data=payload)
+            status, data, raw_text = await self._request(
+                "PUT", url, headers=headers, json_data=payload, params=dict(CONNECTED_PARAMS)
+            )
         except FluidraCircuitBreakerError:
             _LOGGER.warning("Circuit breaker open, cannot control device %s", mask_device_id(device_id))
             return False
@@ -157,14 +228,13 @@ class ComponentsMixin(FluidraAPIBase):
         headers = self._build_auth_headers()
         headers["content-type"] = "application/json; charset=utf-8"
 
-        url = (
-            f"{FLUIDRA_EMEA_BASE}/generic/devices/{quote(str(device_id), safe='')}"
-            f"/components/{int(component_id)}?deviceType=connected"
-        )
+        url = f"{FLUIDRA_EMEA_BASE}/generic/devices/{quote(str(device_id), safe='')}/components/{int(component_id)}"
         payload = {"desiredValue": value}
 
         try:
-            status, _, _ = await self._request("PUT", url, headers=headers, json_data=payload)
+            status, _, _ = await self._request(
+                "PUT", url, headers=headers, json_data=payload, params=dict(CONNECTED_PARAMS)
+            )
         except FluidraError as err:
             _LOGGER.debug("Set component value failed: %s", err)
             return False

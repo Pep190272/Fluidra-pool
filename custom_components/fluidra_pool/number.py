@@ -3,20 +3,25 @@
 from __future__ import annotations
 
 import logging
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import aiohttp
 from homeassistant.components.number import NumberDeviceClass, NumberEntity, NumberMode
-from homeassistant.const import PERCENTAGE
+from homeassistant.const import PERCENTAGE, UnitOfElectricPotential, UnitOfTemperature
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.exceptions import HomeAssistantError
-from homeassistant.helpers.entity_platform import AddEntitiesCallback
+from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 
 from .api_resilience import FluidraError
-from .const import DEVICE_TYPE_PUMP, DOMAIN, FluidraPoolConfigEntry
+from .const import DEVICE_TYPE_CHLORINATOR, DEVICE_TYPE_LIGHT, DOMAIN, FluidraPoolConfigEntry
 from .coordinator import FluidraDataUpdateCoordinator
 from .device_registry import DeviceIdentifier
 from .entity import FluidraPoolControlEntity
+from .helpers import resolve_component_rw
+from .platform_setup import async_setup_dynamic_platform
+
+if TYPE_CHECKING:
+    from .fluidra_api import FluidraPoolAPI
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -26,43 +31,38 @@ PARALLEL_UPDATES = 0  # Coordinator handles all updates
 async def async_setup_entry(
     hass: HomeAssistant,
     config_entry: FluidraPoolConfigEntry,
-    async_add_entities: AddEntitiesCallback,
+    async_add_entities: AddConfigEntryEntitiesCallback,
 ) -> None:
-    """Set up Fluidra Pool number entities."""
+    """Set up Fluidra Pool number entities, including devices added later."""
     coordinator = config_entry.runtime_data.coordinator
 
-    entities: list[NumberEntity] = []
+    def _build(pool_id: str, device: dict[str, Any]) -> list[NumberEntity]:
+        """Create number entities for one device."""
+        entities: list[NumberEntity] = []
+        device_id = device["device_id"]
 
-    # Use cached pools data instead of API call for faster startup
-    pools = coordinator.api.cached_pools or await coordinator.api.get_pools()
-    for pool in pools:
-        for device in pool["devices"]:
-            device_id = device.get("device_id")
-            if not device_id:
-                continue
+        config = DeviceIdentifier.identify_device(device)
+        device_type = config.device_type if config else device.get("type", "")
 
-            config = DeviceIdentifier.identify_device(device)
-            device_type = config.device_type if config else device.get("type", "")
+        # Chlorinator chlorination level — skip read-only probes (e.g. Blue
+        # Connect) that declare no "number" entity and do not dose.
+        if device_type == DEVICE_TYPE_CHLORINATOR and DeviceIdentifier.should_create_entity(device, "number"):
+            entities.append(FluidraChlorinatorLevelNumber(coordinator, coordinator.api, pool_id, device_id))
+            # Only add pH/ORP setpoints if the device has these features
+            if DeviceIdentifier.get_feature(device, "ph_setpoint"):
+                entities.append(FluidraChlorinatorPhSetpoint(coordinator, coordinator.api, pool_id, device_id))
+            if DeviceIdentifier.get_feature(device, "orp_setpoint"):
+                entities.append(FluidraChlorinatorOrpSetpoint(coordinator, coordinator.api, pool_id, device_id))
+            if DeviceIdentifier.get_feature(device, "heating_setpoint"):
+                entities.append(FluidraHeatingSetpoint(coordinator, coordinator.api, pool_id, device_id))
 
-            # Chlorinator chlorination level — skip read-only probes (e.g. Blue
-            # Connect) that declare no "number" entity and do not dose.
-            if device_type == "chlorinator" and DeviceIdentifier.should_create_entity(device, "number"):
-                entities.append(FluidraChlorinatorLevelNumber(coordinator, coordinator.api, pool["id"], device_id))
-                # Only add pH/ORP setpoints if the device has these features
-                if DeviceIdentifier.get_feature(device, "ph_setpoint"):
-                    entities.append(FluidraChlorinatorPhSetpoint(coordinator, coordinator.api, pool["id"], device_id))
-                if DeviceIdentifier.get_feature(device, "orp_setpoint"):
-                    entities.append(FluidraChlorinatorOrpSetpoint(coordinator, coordinator.api, pool["id"], device_id))
+        # LumiPlus Connect effect speed control
+        if device_type == DEVICE_TYPE_LIGHT:
+            entities.append(FluidraLightEffectSpeed(coordinator, coordinator.api, pool_id, device_id))
 
-            if device_type == DEVICE_TYPE_PUMP:
-                # Groupe Réglages - Contrôles de vitesse temporairement désactivés
-                pass
+        return entities
 
-            # LumiPlus Connect effect speed control
-            if device_type == "light":
-                entities.append(FluidraLightEffectSpeed(coordinator, coordinator.api, pool["id"], device_id))
-
-    async_add_entities(entities)
+    await async_setup_dynamic_platform(config_entry, async_add_entities, _build)
 
 
 class FluidraChlorinatorLevelNumber(FluidraPoolControlEntity, NumberEntity):
@@ -71,7 +71,7 @@ class FluidraChlorinatorLevelNumber(FluidraPoolControlEntity, NumberEntity):
     def __init__(
         self,
         coordinator: FluidraDataUpdateCoordinator,
-        api,
+        api: FluidraPoolAPI,
         pool_id: str,
         device_id: str,
     ) -> None:
@@ -93,14 +93,10 @@ class FluidraChlorinatorLevelNumber(FluidraPoolControlEntity, NumberEntity):
         # device_class fits (POWER_FACTOR is electrical and misleads the frontend).
         self._attr_device_class = None
 
-    def _level_components(self) -> tuple[Any, Any]:
+    def _level_components(self) -> tuple[int, int]:
         """Resolve (read, write) components, supporting int or dict feature shapes."""
         cfg = DeviceIdentifier.get_feature(self.device_data, "chlorination_level", 10)
-        if isinstance(cfg, dict):
-            write_component = cfg.get("write", cfg.get("read", 10))
-            read_component = cfg.get("read", write_component)
-            return read_component, write_component
-        return cfg, cfg
+        return resolve_component_rw(cfg)
 
     @callback
     def _handle_coordinator_update(self) -> None:
@@ -121,6 +117,7 @@ class FluidraChlorinatorLevelNumber(FluidraPoolControlEntity, NumberEntity):
 
     async def async_set_native_value(self, value: float) -> None:
         """Set chlorination level."""
+        self._ensure_pool_writable()
         # Write component from device config (int or {"read","write"} dict; default 10).
         _, write_component = self._level_components()
 
@@ -139,6 +136,7 @@ class FluidraChlorinatorLevelNumber(FluidraPoolControlEntity, NumberEntity):
             await self.coordinator.async_request_refresh()
         else:
             _LOGGER.debug("Failed to set chlorination level for %s", self._device_id)
+            raise HomeAssistantError(translation_domain=DOMAIN, translation_key="number_set_failed")
 
     @property
     def icon(self) -> str:
@@ -162,7 +160,7 @@ class FluidraChlorinatorPhSetpoint(FluidraPoolControlEntity, NumberEntity):
     def __init__(
         self,
         coordinator: FluidraDataUpdateCoordinator,
-        api,
+        api: FluidraPoolAPI,
         pool_id: str,
         device_id: str,
     ) -> None:
@@ -185,12 +183,7 @@ class FluidraChlorinatorPhSetpoint(FluidraPoolControlEntity, NumberEntity):
         """Return the current pH setpoint."""
         # Get component config dynamically
         ph_config = DeviceIdentifier.get_feature(self.device_data, "ph_setpoint", {"write": 8, "read": 172})
-
-        # Handle both formats: int (simple) or dict (separate read/write)
-        if isinstance(ph_config, dict):
-            read_component = ph_config.get("read", ph_config.get("write", 8))
-        else:
-            read_component = ph_config
+        read_component, _ = resolve_component_rw(ph_config)
 
         components = self.device_data.get("components", {})
         component_data = components.get(str(read_component), {})
@@ -204,24 +197,21 @@ class FluidraChlorinatorPhSetpoint(FluidraPoolControlEntity, NumberEntity):
         divisor = DeviceIdentifier.get_feature(self.device_data, "ph_setpoint_divisor", 100)
 
         try:
-            return float(raw_value) / divisor
+            value: float = float(raw_value) / divisor
         except (ValueError, TypeError):
             return 7.2
+        return value
 
     async def async_set_native_value(self, value: float) -> None:
         """Set the pH setpoint."""
+        self._ensure_pool_writable()
         # Convert pH value to API format
         divisor = DeviceIdentifier.get_feature(self.device_data, "ph_setpoint_divisor", 100)
         int_value = int(value * divisor)
 
         # Get component config dynamically
         ph_config = DeviceIdentifier.get_feature(self.device_data, "ph_setpoint", {"write": 8, "read": 172})
-
-        # Handle both formats: int (simple) or dict (separate read/write)
-        if isinstance(ph_config, dict):
-            write_component = ph_config.get("write", 8)
-        else:
-            write_component = ph_config
+        _, write_component = resolve_component_rw(ph_config)
 
         try:
             success = await self._api.control_device_component(self._device_id, write_component, int_value)
@@ -231,6 +221,7 @@ class FluidraChlorinatorPhSetpoint(FluidraPoolControlEntity, NumberEntity):
             await self.coordinator.async_request_refresh()
         else:
             _LOGGER.debug("Failed to set pH setpoint for %s", self._device_id)
+            raise HomeAssistantError(translation_domain=DOMAIN, translation_key="number_set_failed")
 
     @property
     def icon(self) -> str:
@@ -242,14 +233,7 @@ class FluidraChlorinatorPhSetpoint(FluidraPoolControlEntity, NumberEntity):
         """Return additional state attributes."""
         # Get component config dynamically
         ph_config = DeviceIdentifier.get_feature(self.device_data, "ph_setpoint", {"write": 8, "read": 172})
-
-        # Handle both formats: int (simple) or dict (separate read/write)
-        if isinstance(ph_config, dict):
-            read_component = ph_config.get("read", ph_config.get("write", 8))
-            write_component = ph_config.get("write", 8)
-        else:
-            read_component = ph_config
-            write_component = ph_config
+        read_component, write_component = resolve_component_rw(ph_config)
 
         # Get current pH reading
         components = self.device_data.get("components", {})
@@ -273,13 +257,103 @@ class FluidraChlorinatorPhSetpoint(FluidraPoolControlEntity, NumberEntity):
         }
 
 
+class FluidraHeatingSetpoint(FluidraPoolControlEntity, NumberEntity):
+    """Heating setpoint for a chlorinator driving a heater through an aux output.
+
+    The eXO iQ carries this on c43 in whole degrees Celsius. Proven by an
+    isolated capture: changing only the setpoint in the app moved c43 from 27 to
+    23 and nothing else but the RSSI and the clock (Issue #175, @Inervo).
+    """
+
+    _attr_translation_key = "heating_setpoint"
+    _attr_icon = "mdi:thermometer-water"
+    _attr_mode = NumberMode.SLIDER
+    _attr_device_class = NumberDeviceClass.TEMPERATURE
+    _attr_native_unit_of_measurement = UnitOfTemperature.CELSIUS
+    _attr_native_step = 1
+
+    def __init__(
+        self,
+        coordinator: FluidraDataUpdateCoordinator,
+        api: FluidraPoolAPI,
+        pool_id: str,
+        device_id: str,
+    ) -> None:
+        """Initialize the heating setpoint control."""
+        super().__init__(coordinator, api, pool_id, device_id)
+        self._attr_unique_id = f"fluidra_{self._device_id}_heating_setpoint"
+        self._attr_native_min_value = DeviceIdentifier.get_feature(self.device_data, "heating_min_temp", 15)
+        self._attr_native_max_value = DeviceIdentifier.get_feature(self.device_data, "heating_max_temp", 32)
+
+    def _component(self) -> int | None:
+        """Return the setpoint register, if the profile declares one."""
+        component = DeviceIdentifier.get_feature(self.device_data, "heating_setpoint", None)
+        return int(component) if component is not None else None
+
+    @property
+    def available(self) -> bool:
+        """Only available once the unit reports heating as configured.
+
+        An aux output has to be assigned to heating on the device itself before
+        this setpoint means anything; c88 flips to True when it is. The register
+        stays readable either way, so this reflects a real state rather than
+        hiding a broken entity.
+        """
+        if not super().available:
+            return False
+        flag = DeviceIdentifier.get_feature(self.device_data, "heating_configured", None)
+        if flag is None:
+            return True
+        components = self.device_data.get("components", {})
+        return bool(components.get(str(flag), {}).get("reportedValue"))
+
+    @property
+    def native_value(self) -> float | None:
+        """Return the current heating setpoint."""
+        component = self._component()
+        if component is None:
+            return None
+        components = self.device_data.get("components", {})
+        data = components.get(str(component), {})
+        raw = data.get("desiredValue", data.get("reportedValue"))
+        if raw is None:
+            return None
+        try:
+            return float(raw)
+        except (ValueError, TypeError):
+            _LOGGER.debug("Failed to parse heating setpoint %s for %s", raw, self._device_id)
+            return None
+
+    async def async_set_native_value(self, value: float) -> None:
+        """Set the heating setpoint."""
+        self._ensure_pool_writable()
+        component = self._component()
+        if component is None:
+            raise HomeAssistantError(translation_domain=DOMAIN, translation_key="number_set_failed")
+
+        try:
+            success = await self._api.control_device_component(self._device_id, component, int(value))
+        except (aiohttp.ClientError, TimeoutError, FluidraError) as err:
+            raise HomeAssistantError(translation_domain=DOMAIN, translation_key="number_set_failed") from err
+        if success:
+            await self.coordinator.async_request_refresh()
+        else:
+            _LOGGER.debug("Failed to set heating setpoint for %s", self._device_id)
+            raise HomeAssistantError(translation_domain=DOMAIN, translation_key="number_set_failed")
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        """Return additional state attributes."""
+        return {"component": self._component(), "device_id": self._device_id}
+
+
 class FluidraChlorinatorOrpSetpoint(FluidraPoolControlEntity, NumberEntity):
     """Number entity for chlorinator ORP/Redox setpoint control."""
 
     def __init__(
         self,
         coordinator: FluidraDataUpdateCoordinator,
-        api,
+        api: FluidraPoolAPI,
         pool_id: str,
         device_id: str,
     ) -> None:
@@ -294,7 +368,7 @@ class FluidraChlorinatorOrpSetpoint(FluidraPoolControlEntity, NumberEntity):
         self._attr_native_min_value = 600
         self._attr_native_max_value = 850
         self._attr_native_step = 10
-        self._attr_native_unit_of_measurement = "mV"
+        self._attr_native_unit_of_measurement = UnitOfElectricPotential.MILLIVOLT
         self._attr_device_class = NumberDeviceClass.VOLTAGE
 
     @property
@@ -302,12 +376,7 @@ class FluidraChlorinatorOrpSetpoint(FluidraPoolControlEntity, NumberEntity):
         """Return the current ORP setpoint."""
         # Get component config dynamically
         orp_config = DeviceIdentifier.get_feature(self.device_data, "orp_setpoint", {"write": 11, "read": 177})
-
-        # Handle both formats: int (simple) or dict (separate read/write)
-        if isinstance(orp_config, dict):
-            read_component = orp_config.get("read", orp_config.get("write", 11))
-        else:
-            read_component = orp_config
+        read_component, _ = resolve_component_rw(orp_config)
 
         components = self.device_data.get("components", {})
         component_data = components.get(str(read_component), {})
@@ -324,16 +393,12 @@ class FluidraChlorinatorOrpSetpoint(FluidraPoolControlEntity, NumberEntity):
 
     async def async_set_native_value(self, value: float) -> None:
         """Set the ORP setpoint."""
+        self._ensure_pool_writable()
         int_value = int(value)
 
         # Get component config dynamically
         orp_config = DeviceIdentifier.get_feature(self.device_data, "orp_setpoint", {"write": 11, "read": 177})
-
-        # Handle both formats: int (simple) or dict (separate read/write)
-        if isinstance(orp_config, dict):
-            write_component = orp_config.get("write", 11)
-        else:
-            write_component = orp_config
+        _, write_component = resolve_component_rw(orp_config)
 
         try:
             success = await self._api.control_device_component(self._device_id, write_component, int_value)
@@ -343,6 +408,7 @@ class FluidraChlorinatorOrpSetpoint(FluidraPoolControlEntity, NumberEntity):
             await self.coordinator.async_request_refresh()
         else:
             _LOGGER.debug("Failed to set ORP setpoint for %s", self._device_id)
+            raise HomeAssistantError(translation_domain=DOMAIN, translation_key="number_set_failed")
 
     @property
     def icon(self) -> str:
@@ -354,14 +420,7 @@ class FluidraChlorinatorOrpSetpoint(FluidraPoolControlEntity, NumberEntity):
         """Return additional state attributes."""
         # Get component config dynamically
         orp_config = DeviceIdentifier.get_feature(self.device_data, "orp_setpoint", {"write": 11, "read": 177})
-
-        # Handle both formats: int (simple) or dict (separate read/write)
-        if isinstance(orp_config, dict):
-            read_component = orp_config.get("read", orp_config.get("write", 11))
-            write_component = orp_config.get("write", 11)
-        else:
-            read_component = orp_config
-            write_component = orp_config
+        read_component, write_component = resolve_component_rw(orp_config)
 
         # Get current ORP reading
         components = self.device_data.get("components", {})
@@ -383,7 +442,7 @@ class FluidraLightEffectSpeed(FluidraPoolControlEntity, NumberEntity):
     def __init__(
         self,
         coordinator: FluidraDataUpdateCoordinator,
-        api,
+        api: FluidraPoolAPI,
         pool_id: str,
         device_id: str,
     ) -> None:
@@ -408,6 +467,7 @@ class FluidraLightEffectSpeed(FluidraPoolControlEntity, NumberEntity):
 
     async def async_set_native_value(self, value: float) -> None:
         """Set effect speed to component 20."""
+        self._ensure_pool_writable()
         int_value = int(value)
 
         try:
@@ -418,6 +478,7 @@ class FluidraLightEffectSpeed(FluidraPoolControlEntity, NumberEntity):
             await self.coordinator.async_request_refresh()
         else:
             _LOGGER.debug("Failed to set effect speed for %s", self._device_id)
+            raise HomeAssistantError(translation_domain=DOMAIN, translation_key="number_set_failed")
 
     @property
     def icon(self) -> str:

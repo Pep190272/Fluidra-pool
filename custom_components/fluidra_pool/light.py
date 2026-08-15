@@ -3,21 +3,22 @@
 from __future__ import annotations
 
 import logging
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import aiohttp
 from homeassistant.components.light import (
     ATTR_BRIGHTNESS,
     ATTR_RGBW_COLOR,
-    ColorMode,
     LightEntity,
 )
+from homeassistant.components.light.const import ColorMode
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.exceptions import HomeAssistantError
-from homeassistant.helpers.entity_platform import AddEntitiesCallback
+from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 
 from .api_resilience import FluidraError
 from .const import (
+    DEVICE_TYPE_LIGHT,
     DOMAIN,
     LUMIPLUS_COMPONENT_BRIGHTNESS,
     LUMIPLUS_COMPONENT_COLOR,
@@ -25,6 +26,11 @@ from .const import (
     FluidraPoolConfigEntry,
 )
 from .entity import FluidraPoolControlEntity
+from .platform_setup import async_setup_dynamic_platform
+
+if TYPE_CHECKING:
+    from .coordinator import FluidraDataUpdateCoordinator
+    from .fluidra_api import FluidraPoolAPI
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -34,28 +40,25 @@ PARALLEL_UPDATES = 0
 async def async_setup_entry(
     hass: HomeAssistant,
     entry: FluidraPoolConfigEntry,
-    async_add_entities: AddEntitiesCallback,
+    async_add_entities: AddConfigEntryEntitiesCallback,
 ) -> None:
-    """Set up Fluidra Pool light entities."""
+    """Set up Fluidra Pool light entities, including devices added later."""
     coordinator = entry.runtime_data.coordinator
 
-    if not coordinator.data:
-        await coordinator.async_config_entry_first_refresh()
+    def _build(pool_id: str, device: dict[str, Any]) -> list[FluidraLight]:
+        """Create light entities for one device."""
+        entities: list[FluidraLight] = []
+        device_id = device["device_id"]
 
-    entities: list[FluidraLight] = []
-    if coordinator.data:
-        for pool_id, pool in coordinator.data.items():
-            for device in pool.get("devices", []):
-                device_type = device.get("type", "")
-                family = device.get("family", "").lower()
+        device_type = device.get("type", "")
+        family = device.get("family", "").lower()
 
-                if device_type == "light" or "light" in family:
-                    device_id = device.get("device_id")
-                    if not device_id:
-                        continue
-                    entities.append(FluidraLight(coordinator, coordinator.api, pool_id, device_id))
+        if device_type == DEVICE_TYPE_LIGHT or DEVICE_TYPE_LIGHT in family:
+            entities.append(FluidraLight(coordinator, coordinator.api, pool_id, device_id))
 
-    async_add_entities(entities)
+        return entities
+
+    await async_setup_dynamic_platform(entry, async_add_entities, _build)
 
 
 class FluidraLight(FluidraPoolControlEntity, LightEntity):
@@ -71,7 +74,13 @@ class FluidraLight(FluidraPoolControlEntity, LightEntity):
     _attr_color_mode = ColorMode.RGBW
     _attr_supported_color_modes = {ColorMode.RGBW}
 
-    def __init__(self, coordinator, api, pool_id: str, device_id: str) -> None:
+    def __init__(
+        self,
+        coordinator: FluidraDataUpdateCoordinator,
+        api: FluidraPoolAPI,
+        pool_id: str,
+        device_id: str,
+    ) -> None:
         """Initialize the light."""
         super().__init__(coordinator, api, pool_id, device_id)
         self._attr_unique_id = f"{DOMAIN}_{pool_id}_{device_id}_light"
@@ -174,6 +183,7 @@ class FluidraLight(FluidraPoolControlEntity, LightEntity):
 
     async def async_turn_on(self, **kwargs: Any) -> None:
         """Turn the light on, optionally setting brightness/colour."""
+        self._ensure_pool_writable()
         self._optimistic_is_on = True
         # Aggregate every sub-command's result: a False from brightness or colour
         # must fail (and roll back) just like a failed power command, otherwise a
@@ -218,6 +228,7 @@ class FluidraLight(FluidraPoolControlEntity, LightEntity):
 
     async def async_turn_off(self, **kwargs: Any) -> None:
         """Turn the light off."""
+        self._ensure_pool_writable()
         self._optimistic_is_on = False
         try:
             success = await self._api.set_component_string_value(self._device_id, LUMIPLUS_COMPONENT_POWER, "0")

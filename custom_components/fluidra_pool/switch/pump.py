@@ -7,9 +7,16 @@ import logging
 from typing import Any
 
 import aiohttp
+from homeassistant.exceptions import HomeAssistantError
 
 from ..api_resilience import FluidraError
-from ..const import DOMAIN, OPTIMISTIC_ACTION_TIMEOUT, SWITCH_CONFIRMATION_DELAY
+from ..const import (
+    DOMAIN,
+    OPTIMISTIC_ACTION_TIMEOUT,
+    SWITCH_CONFIRMATION_DELAY,
+    VICTORIA_OPTIMISTIC_TIMEOUT,
+)
+from ..device_registry import DeviceIdentifier
 from .base import FluidraPoolSwitchEntity
 
 _LOGGER = logging.getLogger(__name__)
@@ -43,6 +50,7 @@ class FluidraPumpSwitch(FluidraPoolSwitchEntity):
 
     async def async_turn_on(self, **kwargs: Any) -> None:
         """Turn the pump on using discovered API with optimistic UI."""
+        self._ensure_pool_writable()
         try:
             self._set_pending_state(True)
 
@@ -53,6 +61,9 @@ class FluidraPumpSwitch(FluidraPoolSwitchEntity):
                 await self.coordinator.async_request_refresh()
             else:
                 self._clear_pending_state()
+                raise HomeAssistantError(translation_domain=DOMAIN, translation_key="pump_set_failed")
+        except HomeAssistantError:
+            raise
         except (
             aiohttp.ClientError,
             TimeoutError,
@@ -64,9 +75,11 @@ class FluidraPumpSwitch(FluidraPoolSwitchEntity):
         ) as err:
             _LOGGER.debug("Failed to turn on pump: %s", err)
             self._clear_pending_state()
+            raise HomeAssistantError(translation_domain=DOMAIN, translation_key="pump_set_failed") from err
 
     async def async_turn_off(self, **kwargs: Any) -> None:
         """Turn the pump off using discovered API with optimistic UI."""
+        self._ensure_pool_writable()
         try:
             self._set_pending_state(False)
 
@@ -76,6 +89,9 @@ class FluidraPumpSwitch(FluidraPoolSwitchEntity):
                 await self.coordinator.async_request_refresh()
             else:
                 self._clear_pending_state()
+                raise HomeAssistantError(translation_domain=DOMAIN, translation_key="pump_set_failed")
+        except HomeAssistantError:
+            raise
         except (
             aiohttp.ClientError,
             TimeoutError,
@@ -87,9 +103,10 @@ class FluidraPumpSwitch(FluidraPoolSwitchEntity):
         ) as err:
             _LOGGER.debug("Failed to turn off pump: %s", err)
             self._clear_pending_state()
+            raise HomeAssistantError(translation_domain=DOMAIN, translation_key="pump_set_failed") from err
 
     @property
-    def extra_state_attributes(self) -> dict:
+    def extra_state_attributes(self) -> dict[str, Any]:
         """Return extra state attributes."""
         return {
             "component_id": 9,
@@ -123,12 +140,25 @@ class FluidraAutoModeSwitch(FluidraPoolSwitchEntity):
         return "mdi:autorenew-off"
 
     @property
+    def _optimistic_timeout(self) -> float:
+        """How long to hold the optimistic state before trusting the poll again.
+
+        Victoria VS pumps need far longer than the default: the cloud lags 15-30 s
+        behind a command and arming the schedule runs a ~1 min PRIMING/CALIBRATION
+        sequence first, during which the reported value hasn't caught up yet
+        (Issue #144).
+        """
+        if DeviceIdentifier.has_feature(self.device_data, "victoria_vs_mode"):
+            return VICTORIA_OPTIMISTIC_TIMEOUT
+        return OPTIMISTIC_ACTION_TIMEOUT
+
+    @property
     def is_on(self) -> bool:
         """Return true if auto mode is on using optimistic UI or real-time reported value."""
         auto_reported = self.device_data.get("auto_reported")
         actual = bool(auto_reported) if auto_reported is not None else self.device_data.get("auto_mode_enabled", False)
         if self._pending_state is not None:
-            if actual == self._pending_state or self._pending_state_expired(OPTIMISTIC_ACTION_TIMEOUT):
+            if actual == self._pending_state or self._pending_state_expired(self._optimistic_timeout):
                 self._clear_pending_state()
                 return actual
             return self._pending_state
@@ -136,6 +166,7 @@ class FluidraAutoModeSwitch(FluidraPoolSwitchEntity):
 
     async def async_turn_on(self, **kwargs: Any) -> None:
         """Turn auto mode on using discovered Component 10 with optimistic UI."""
+        self._ensure_pool_writable()
         try:
             self._set_pending_state(True)
 
@@ -145,6 +176,9 @@ class FluidraAutoModeSwitch(FluidraPoolSwitchEntity):
                 await self.coordinator.async_request_refresh()
             else:
                 self._clear_pending_state()
+                raise HomeAssistantError(translation_domain=DOMAIN, translation_key="auto_mode_set_failed")
+        except HomeAssistantError:
+            raise
         except (
             aiohttp.ClientError,
             TimeoutError,
@@ -156,9 +190,11 @@ class FluidraAutoModeSwitch(FluidraPoolSwitchEntity):
         ) as err:
             _LOGGER.debug("Failed to enable auto mode: %s", err)
             self._clear_pending_state()
+            raise HomeAssistantError(translation_domain=DOMAIN, translation_key="auto_mode_set_failed") from err
 
     async def async_turn_off(self, **kwargs: Any) -> None:
         """Turn auto mode off using discovered Component 10 with optimistic UI."""
+        self._ensure_pool_writable()
         try:
             self._set_pending_state(False)
 
@@ -168,6 +204,9 @@ class FluidraAutoModeSwitch(FluidraPoolSwitchEntity):
                 await self.coordinator.async_request_refresh()
             else:
                 self._clear_pending_state()
+                raise HomeAssistantError(translation_domain=DOMAIN, translation_key="auto_mode_set_failed")
+        except HomeAssistantError:
+            raise
         except (
             aiohttp.ClientError,
             TimeoutError,
@@ -179,9 +218,10 @@ class FluidraAutoModeSwitch(FluidraPoolSwitchEntity):
         ) as err:
             _LOGGER.debug("Failed to disable auto mode: %s", err)
             self._clear_pending_state()
+            raise HomeAssistantError(translation_domain=DOMAIN, translation_key="auto_mode_set_failed") from err
 
     @property
-    def extra_state_attributes(self) -> dict:
+    def extra_state_attributes(self) -> dict[str, Any]:
         """Return extra state attributes."""
         return {
             "component_id": 10,

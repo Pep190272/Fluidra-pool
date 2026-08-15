@@ -150,6 +150,22 @@ async def test_component_67_out_of_range_temperature_ignored(coordinator: Fluidr
     assert "air_temperature" not in device
 
 
+async def test_component_67_air_temperature_for_z250iq(coordinator: FluidraDataUpdateCoordinator) -> None:
+    """Component 67 stays air temperature ×10 on the promoted Z250iQ profile (Issues #131/#139)."""
+    from custom_components.fluidra_pool.device_registry import DEVICE_CONFIGS
+
+    device = _pinned_device(features=DEVICE_CONFIGS["z250iq_heat_pump"].features)
+    coordinator._process_component_state(device, "pool_001", 67, {"reportedValue": 213})
+    assert device["air_temperature"] == 21.3
+
+
+async def test_component_67_ignored_without_air_temp_model(coordinator: FluidraDataUpdateCoordinator) -> None:
+    """A heat pump without z260iq_mode does not expose c67 as air temperature."""
+    device = _pinned_device(features={})
+    coordinator._process_component_state(device, "pool_001", 67, {"reportedValue": 245})
+    assert "air_temperature" not in device
+
+
 # --- Z550 specific paths (16, 17, 21, 37, 40, 61) -----------------------
 
 
@@ -266,6 +282,108 @@ async def test_component_19_out_of_range_ignored(coordinator: FluidraDataUpdateC
     device = _pinned_device(device_type="heat_pump")
     coordinator._process_component_state(device, "pool_001", 19, {"reportedValue": 9999})
     assert "water_temperature" not in device
+
+
+# --- Z650iQ-specific paths (components 9, 10, 12, 13, 39, 44, 48, 31/111, 130) ---
+
+
+async def test_component_9_does_not_set_heat_pump_reported_for_z650iq(
+    coordinator: FluidraDataUpdateCoordinator,
+) -> None:
+    """c9 stayed constant across real on/off toggles — it must NOT drive on/off."""
+    device = _pinned_device(device_type="heat_pump", features={"z650iq_mode": True, "z260iq_mode": True})
+    coordinator._process_component_state(device, "pool_001", 9, {"reportedValue": 1})
+    assert "heat_pump_reported" not in device
+    assert device["pump_reported"] == 1  # still recorded generically
+
+
+async def test_component_10_heat_pump_on_off_for_z650iq(coordinator: FluidraDataUpdateCoordinator) -> None:
+    """c10 is the confirmed on/off register for this family."""
+    device = _pinned_device(device_type="heat_pump", features={"z650iq_mode": True, "z260iq_mode": True})
+    coordinator._process_component_state(device, "pool_001", 10, {"reportedValue": 1})
+    assert device["heat_pump_reported"] == 1
+    assert device["is_heating"] is True
+
+    coordinator._process_component_state(device, "pool_001", 10, {"reportedValue": 0})
+    assert device["heat_pump_reported"] == 0
+    assert device["is_heating"] is False
+
+
+async def test_component_10_auto_mode_unaffected_for_non_z650iq_devices(
+    coordinator: FluidraDataUpdateCoordinator,
+) -> None:
+    """c10 keeps its generic auto-mode meaning for pumps and other families."""
+    device = _pinned_device(device_type="pump")
+    coordinator._process_component_state(device, "pool_001", 10, {"reportedValue": 1})
+    assert device["auto_mode_enabled"] is True
+    assert "heat_pump_reported" not in device
+
+
+async def test_component_12_setpoint_for_z650iq(coordinator: FluidraDataUpdateCoordinator) -> None:
+    """c12 raw 280 → 28.0°C target when setpoint_component=12 (Z650iQ)."""
+    device = _pinned_device(device_type="heat_pump", features={"z650iq_mode": True, "setpoint_component": 12})
+    coordinator._process_component_state(device, "pool_001", 12, {"reportedValue": 280})
+    assert device["target_temperature"] == 28.0
+
+
+async def test_component_15_ignored_when_setpoint_component_is_12(
+    coordinator: FluidraDataUpdateCoordinator,
+) -> None:
+    """The generic c15 setpoint path must defer to a family's setpoint_component override."""
+    device = _pinned_device(device_type="heat_pump", features={"z650iq_mode": True, "setpoint_component": 12})
+    coordinator._process_component_state(device, "pool_001", 15, {"reportedValue": 500})
+    assert "target_temperature" not in device
+
+
+async def test_component_13_water_temperature_for_z650iq(coordinator: FluidraDataUpdateCoordinator) -> None:
+    """c13 is the current water temperature on this family, NOT on/off (unlike Z260iQ)."""
+    device = _pinned_device(device_type="heat_pump", features={"z650iq_mode": True})
+    coordinator._process_component_state(device, "pool_001", 13, {"reportedValue": 275})
+    assert device["water_temperature"] == 27.5
+    assert "heat_pump_reported" not in device
+
+
+async def test_component_39_compressor_running_hours_for_z650iq(
+    coordinator: FluidraDataUpdateCoordinator,
+) -> None:
+    """c39 is compressor running hours here, not the Z260iQ air-temperature alarm."""
+    device = _pinned_device(device_type="heat_pump", features={"z650iq_mode": True, "z260iq_mode": True})
+    coordinator._process_component_state(device, "pool_001", 39, {"reportedValue": 12})
+    assert device["compressor_running_hours"] == 12
+    assert "air_temperature_alarm" not in device
+
+
+async def test_component_44_air_temperature_for_z650iq(coordinator: FluidraDataUpdateCoordinator) -> None:
+    """c44 raw 395 → 39.5°C outdoor air (Z650iQ only — c40 is refrigerant temp)."""
+    device = _pinned_device(device_type="heat_pump", features={"z650iq_mode": True})
+    coordinator._process_component_state(device, "pool_001", 44, {"reportedValue": 395})
+    assert device["air_temperature"] == 39.5
+
+
+async def test_component_32_compressor_modulation_for_z650iq(
+    coordinator: FluidraDataUpdateCoordinator,
+) -> None:
+    """c32 is the compressor modulation level (0 = compressor off)."""
+    device = _pinned_device(device_type="heat_pump", features={"z650iq_mode": True})
+    coordinator._process_component_state(device, "pool_001", 32, {"reportedValue": 52})
+    assert device["compressor_modulation"] == 52
+
+    coordinator._process_component_state(device, "pool_001", 32, {"reportedValue": 0})
+    assert device["compressor_modulation"] == 0
+
+
+async def test_component_32_ignored_without_z650iq_mode(coordinator: FluidraDataUpdateCoordinator) -> None:
+    """c32 means something else on other families — don't decode it there."""
+    device = _pinned_device(device_type="heat_pump")
+    coordinator._process_component_state(device, "pool_001", 32, {"reportedValue": 52})
+    assert "compressor_modulation" not in device
+
+
+async def test_component_48_power_for_z650iq(coordinator: FluidraDataUpdateCoordinator) -> None:
+    """c48 is the instantaneous power draw in Watts."""
+    device = _pinned_device(device_type="heat_pump", features={"z650iq_mode": True})
+    coordinator._process_component_state(device, "pool_001", 48, {"reportedValue": 642})
+    assert device["pump_power"] == 642
 
 
 async def test_component_62_heat_pump_water_temp(coordinator: FluidraDataUpdateCoordinator) -> None:
@@ -397,3 +515,336 @@ async def test_standard_layout_unchanged_without_info_layout(
     coordinator._process_component_state(device, "pool_001", 2, {"reportedValue": -65})
     assert device["device_id_component"] == "DEV-ID"
     assert device["signal_strength_component"] == -65
+
+
+# --- Victoria Smart Connect VS string-register decoder (Issue #144) ------
+
+
+def _victoria_device() -> dict[str, Any]:
+    return _pinned_device(features={"victoria_vs_mode": True})
+
+
+async def test_victoria_component_14_running_string(coordinator: FluidraDataUpdateCoordinator) -> None:
+    """c14 carries the running state as a string on the Victoria."""
+    device = _victoria_device()
+    coordinator._process_component_state(device, "pool_001", 14, {"reportedValue": "RUNNING"})
+    assert device["is_running"] is True
+    assert device["pump_reported"] is True
+    coordinator._process_component_state(device, "pool_001", 14, {"reportedValue": "NOT RUNNING"})
+    assert device["is_running"] is False
+    assert device["pump_reported"] is False
+
+
+async def test_victoria_component_14_non_string_ignored(coordinator: FluidraDataUpdateCoordinator) -> None:
+    """A missing/numeric c14 must not claim the pump stopped."""
+    device = _victoria_device()
+    coordinator._process_component_state(device, "pool_001", 14, {"reportedValue": None})
+    assert "is_running" not in device
+    assert "pump_reported" not in device
+
+
+async def test_victoria_component_13_drives_auto_toggle(coordinator: FluidraDataUpdateCoordinator) -> None:
+    """c13 is the auto-schedule armed flag — the true Auto-toggle state (Issue #144)."""
+    device = _victoria_device()
+    coordinator._process_component_state(device, "pool_001", 13, {"reportedValue": 1})
+    assert device["auto_mode_enabled"] is True
+    assert device["auto_reported"] is True
+    coordinator._process_component_state(device, "pool_001", 13, {"reportedValue": 0})
+    assert device["auto_mode_enabled"] is False
+    assert device["auto_reported"] is False
+
+
+async def test_victoria_component_16_is_mode_info_only(coordinator: FluidraDataUpdateCoordinator) -> None:
+    """c16 is the running-mode label; it must NOT drive the Auto toggle any more.
+
+    Regression for Issue #144: a quick function runs with c16="QUICK FUNCTION"
+    while the schedule is still armed (c13=1), so Auto must stay on.
+    """
+    device = _victoria_device()
+    # Auto armed via c13.
+    coordinator._process_component_state(device, "pool_001", 13, {"reportedValue": 1})
+    # A quick function starts — c16 says QUICK FUNCTION but Auto stays armed.
+    coordinator._process_component_state(device, "pool_001", 16, {"reportedValue": "QUICK FUNCTION"})
+    assert device["pump_mode"] == "QUICK FUNCTION"
+    assert device["auto_mode_enabled"] is True  # c13 still 1 → Auto still on
+
+
+async def test_victoria_component_17_18_setpoint_value_and_type(
+    coordinator: FluidraDataUpdateCoordinator,
+) -> None:
+    """c17 is the target (95 % or 5 m³/h) and c18 says which one (SPEED/FLOW)."""
+    device = _victoria_device()
+    coordinator._process_component_state(device, "pool_001", 17, {"reportedValue": 95})
+    coordinator._process_component_state(device, "pool_001", 18, {"reportedValue": "SPEED"})
+    assert device["pump_setpoint"] == 95
+    assert device["pump_setpoint_type"] == "SPEED"
+    coordinator._process_component_state(device, "pool_001", 17, {"reportedValue": 5})
+    coordinator._process_component_state(device, "pool_001", 18, {"reportedValue": "FLOW"})
+    assert device["pump_setpoint"] == 5
+    assert device["pump_setpoint_type"] == "FLOW"
+
+
+async def test_victoria_component_20_is_preset_slot_not_schedules(
+    coordinator: FluidraDataUpdateCoordinator,
+) -> None:
+    """c20 is the quick-function preset slot; it must not be parsed as schedules."""
+    device = _victoria_device()
+    coordinator._process_component_state(device, "pool_001", 20, {"reportedValue": -1})
+    assert device["pump_preset_slot"] == -1
+    assert "schedule_data" not in device
+
+
+async def test_victoria_component_21_live_output_percent(coordinator: FluidraDataUpdateCoordinator) -> None:
+    """c21 is the live output %, not the network status."""
+    device = _victoria_device()
+    coordinator._process_component_state(device, "pool_001", 21, {"reportedValue": 62})
+    assert device["speed_percent"] == 62
+    assert "network_status_component" not in device
+
+
+async def test_victoria_component_21_clamped_to_percent_range(
+    coordinator: FluidraDataUpdateCoordinator,
+) -> None:
+    device = _victoria_device()
+    coordinator._process_component_state(device, "pool_001", 21, {"reportedValue": 250})
+    assert device["speed_percent"] == 100
+    coordinator._process_component_state(device, "pool_001", 21, {"reportedValue": -3})
+    assert device["speed_percent"] == 0
+
+
+async def test_victoria_component_22_power_watts(coordinator: FluidraDataUpdateCoordinator) -> None:
+    """c22 tracks the HMI power display (719 at 95 % → 720 W on the HMI)."""
+    device = _victoria_device()
+    coordinator._process_component_state(device, "pool_001", 22, {"reportedValue": 719})
+    assert device["pump_power"] == 719
+
+
+async def test_victoria_component_24_head_cm_to_metres(coordinator: FluidraDataUpdateCoordinator) -> None:
+    """c24 is the head in cm (1197 → HMI shows 11-12 m)."""
+    device = _victoria_device()
+    coordinator._process_component_state(device, "pool_001", 24, {"reportedValue": 1197})
+    assert device["pump_head"] == 11.97
+
+
+async def test_victoria_components_9_10_do_not_stomp_state(
+    coordinator: FluidraDataUpdateCoordinator,
+) -> None:
+    """c9/c10 stay 0 on this family even at full speed; the numeric E30 mapping
+    must not override the c13/c14 string/flag state."""
+    device = _victoria_device()
+    coordinator._process_component_state(device, "pool_001", 13, {"reportedValue": 1})
+    coordinator._process_component_state(device, "pool_001", 14, {"reportedValue": "RUNNING"})
+    coordinator._process_component_state(device, "pool_001", 9, {"reportedValue": 0})
+    coordinator._process_component_state(device, "pool_001", 10, {"reportedValue": 0})
+    assert device["is_running"] is True
+    assert device["pump_reported"] is True
+    assert device["auto_mode_enabled"] is True
+    assert device["auto_reported"] is True
+
+
+async def test_victoria_raw_component_data_kept_for_diagnostics(
+    coordinator: FluidraDataUpdateCoordinator,
+) -> None:
+    """Undeciphered registers (c13/c23) keep their raw dumps for Issue #144."""
+    device = _victoria_device()
+    coordinator._process_component_state(device, "pool_001", 23, {"reportedValue": 40})
+    assert device["components"]["23"] == {"reportedValue": 40}
+    assert device["component_23_data"] == {"reportedValue": 40}
+
+
+async def test_non_victoria_pump_component_14_keeps_default_path(
+    coordinator: FluidraDataUpdateCoordinator,
+) -> None:
+    """Without the flag, c14 keeps the shared mapping (no pump state derived)."""
+    device = _pinned_device()
+    coordinator._process_component_state(device, "pool_001", 14, {"reportedValue": "RUNNING"})
+    assert "is_running" not in device
+    assert device["component_14_data"] == {"reportedValue": "RUNNING"}
+
+
+async def test_victoria_full_capture_replay(coordinator: FluidraDataUpdateCoordinator) -> None:
+    """Replay @renaatski's real '7 m³/h quick function' capture end-to-end.
+
+    Every component of the scan window is processed in scan order; the final
+    device state must match what the pump's app and HMI showed at capture time.
+    """
+    device = _victoria_device()
+    capture = {
+        0: "170126080134",
+        1: "PN-REDACTED",
+        2: "SIG-REDACTED",
+        3: "3.19.9",
+        9: 0,
+        10: 0,
+        11: "77946",
+        12: "1hp",
+        13: 1,
+        14: "RUNNING",
+        15: 0,
+        16: "QUICK FUNCTION",
+        17: 5,
+        18: "FLOW",
+        19: "s6",
+        20: 4,
+        21: 62,
+        22: 203,
+        23: 40,
+        24: 457,
+    }
+    for component_id, value in capture.items():
+        coordinator._process_component_state(device, "pool_001", component_id, {"reportedValue": value})
+
+    # Standard info slots still resolve through the shared path.
+    assert device["device_id_component"] == "170126080134"
+    assert device["firmware_version_component"] == "3.19.9"
+    # Decoded pump state: running manually at 5 m³/h target, 62 % output.
+    assert device["is_running"] is True
+    # c13=1 → Auto stays armed even though it's running a QUICK FUNCTION (Issue #144).
+    assert device["auto_mode_enabled"] is True
+    assert device["pump_mode"] == "QUICK FUNCTION"
+    assert device["pump_setpoint"] == 5
+    assert device["pump_setpoint_type"] == "FLOW"
+    assert device["pump_preset_slot"] == 4
+    assert device["speed_percent"] == 62
+    assert device["pump_power"] == 203
+    assert device["pump_head"] == 4.57
+    # Dead registers must not have stomped anything.
+    assert device["pump_reported"] is True
+    assert device["auto_reported"] is True  # c13=1 in the capture
+
+
+async def test_victoria_component_14_priming_counts_as_running(coordinator: FluidraDataUpdateCoordinator) -> None:
+    """PRIMING is the self-priming spin-up — the motor turns, so it's running (Issue #144)."""
+    device = _victoria_device()
+    coordinator._process_component_state(device, "pool_001", 14, {"reportedValue": "PRIMING"})
+    assert device["is_running"] is True
+    coordinator._process_component_state(device, "pool_001", 14, {"reportedValue": "STOP"})
+    assert device["is_running"] is False
+
+
+async def test_victoria_component_16_transient_modes_are_info_only(coordinator: FluidraDataUpdateCoordinator) -> None:
+    """Transient c16 modes are stored as pump_mode without touching the Auto toggle."""
+    device = _victoria_device()
+    coordinator._process_component_state(device, "pool_001", 16, {"reportedValue": "AUTO PRIMING"})
+    assert device["pump_mode"] == "AUTO PRIMING"
+    assert "auto_mode_enabled" not in device  # c16 doesn't set it; only c13 does
+    coordinator._process_component_state(device, "pool_001", 16, {"reportedValue": "PUMP CALIBRATION"})
+    assert device["pump_mode"] == "PUMP CALIBRATION"
+
+
+async def test_victoria_component_25_flow_rate(coordinator: FluidraDataUpdateCoordinator) -> None:
+    """c25 is the calculated flow rate in m³/h (Issue #144)."""
+    device = _victoria_device()
+    coordinator._process_component_state(device, "pool_001", 25, {"reportedValue": 7.2})
+    assert device["pump_flow"] == 7.2
+
+
+async def test_victoria_hardware_limits_c42_to_c45(coordinator: FluidraDataUpdateCoordinator) -> None:
+    """c42/c43 = min/max speed %, c44/c45 = min/max flow m³/h (Issue #144)."""
+    device = _victoria_device()
+    coordinator._process_component_state(device, "pool_001", 42, {"reportedValue": 40})
+    coordinator._process_component_state(device, "pool_001", 43, {"reportedValue": 100})
+    coordinator._process_component_state(device, "pool_001", 44, {"reportedValue": 4})
+    coordinator._process_component_state(device, "pool_001", 45, {"reportedValue": 25})
+    assert device["pump_speed_min"] == 40
+    assert device["pump_speed_max"] == 100
+    assert device["pump_flow_min"] == 4
+    assert device["pump_flow_max"] == 25
+
+
+async def test_victoria_speed_preset_digital_inputs(coordinator: FluidraDataUpdateCoordinator) -> None:
+    """c29/c28/c27 = Low/Medium/High speed dry-contact inputs (Issue #144)."""
+    device = _victoria_device()
+    coordinator._process_component_state(device, "pool_001", 29, {"reportedValue": 1})
+    coordinator._process_component_state(device, "pool_001", 28, {"reportedValue": 0})
+    coordinator._process_component_state(device, "pool_001", 27, {"reportedValue": 0})
+    assert device["pump_speed_input_low"] is True
+    assert device["pump_speed_input_medium"] is False
+    assert device["pump_speed_input_high"] is False
+
+
+async def test_victoria_c28_not_treated_as_no_flow_alarm(coordinator: FluidraDataUpdateCoordinator) -> None:
+    """On a Victoria, c28 is the Medium-speed input, NOT the Z260iQ no-flow alarm."""
+    device = _victoria_device()
+    coordinator._process_component_state(device, "pool_001", 28, {"reportedValue": 1})
+    assert device["pump_speed_input_medium"] is True
+    assert "no_flow_alarm" not in device
+
+
+async def test_victoria_component_135_quick_function_profile(coordinator: FluidraDataUpdateCoordinator) -> None:
+    """c135 carries the active quick-function profile as a JSON object (Issue #144)."""
+    device = _victoria_device()
+    payload = {"duration": "P0", "mode": "SPEED", "name": "MID SPEED", "setpoint": 75}
+    coordinator._process_component_state(device, "pool_001", 135, {"reportedValue": payload})
+    assert device["pump_quick_function"] == payload
+
+
+async def test_victoria_component_135_ignores_non_dict(coordinator: FluidraDataUpdateCoordinator) -> None:
+    device = _victoria_device()
+    coordinator._process_component_state(device, "pool_001", 135, {"reportedValue": None})
+    assert "pump_quick_function" not in device
+
+
+async def test_victoria_component_136_expiry(coordinator: FluidraDataUpdateCoordinator) -> None:
+    """c136 is the expiry epoch of a timed quick function; 0 means untimed/idle."""
+    device = _victoria_device()
+    coordinator._process_component_state(device, "pool_001", 136, {"reportedValue": 1784596101})
+    assert device["pump_quick_function_expiry"] == 1784596101
+    coordinator._process_component_state(device, "pool_001", 136, {"reportedValue": 0})
+    assert device["pump_quick_function_expiry"] is None
+
+
+async def test_victoria_component_19_active_schedule_id(coordinator: FluidraDataUpdateCoordinator) -> None:
+    """c19 is the running scheduler entry's id — the join key onto /schedulers."""
+    device = _victoria_device()
+    coordinator._process_component_state(device, "pool_001", 19, {"reportedValue": "s6"})
+    assert device["pump_active_schedule_id"] == "s6"
+
+
+@pytest.mark.parametrize("idle_value", ["0", 0, "", None])
+async def test_victoria_component_19_cleared_when_idle(
+    coordinator: FluidraDataUpdateCoordinator, idle_value: Any
+) -> None:
+    """ "0"/empty means no schedule is running — the stale id must be dropped."""
+    device = _victoria_device()
+    coordinator._process_component_state(device, "pool_001", 19, {"reportedValue": "s6"})
+    coordinator._process_component_state(device, "pool_001", 19, {"reportedValue": idle_value})
+    assert "pump_active_schedule_id" not in device
+
+
+async def test_victoria_preset_slots_decoded_as_objects(coordinator: FluidraDataUpdateCoordinator) -> None:
+    """c126-c134 are the quick-function preset slots, keyed by their index (Issue #144)."""
+    device = _victoria_device()
+    coordinator._process_component_state(
+        device, "pool_001", 126, {"reportedValue": {"name": "CLEAN", "mode": "SPEED", "setpoint": 100}}
+    )
+    coordinator._process_component_state(
+        device, "pool_001", 128, {"reportedValue": {"name": "MID SPEED", "mode": "SPEED", "setpoint": 75}}
+    )
+    assert device["pump_presets"][0]["name"] == "CLEAN"
+    assert device["pump_presets"][2]["setpoint"] == 75
+
+
+async def test_victoria_empty_preset_slot_removed(coordinator: FluidraDataUpdateCoordinator) -> None:
+    """A slot reporting null is an unconfigured tile and must not linger."""
+    device = _victoria_device()
+    coordinator._process_component_state(device, "pool_001", 130, {"reportedValue": {"name": "5 m3/h"}})
+    assert 4 in device["pump_presets"]
+    coordinator._process_component_state(device, "pool_001", 130, {"reportedValue": None})
+    assert 4 not in device["pump_presets"]
+
+
+async def test_component_39_air_temperature_alarm_for_z260iq(coordinator: FluidraDataUpdateCoordinator) -> None:
+    """c39 is the E13 fault (intake air > ~43 °C) on the Z260iQ family (Issue #139)."""
+    device = _pinned_device(features={"z260iq_mode": True})
+    coordinator._process_component_state(device, "pool_001", 39, {"reportedValue": 1})
+    assert device["air_temperature_alarm"] is True
+    coordinator._process_component_state(device, "pool_001", 39, {"reportedValue": 0})
+    assert device["air_temperature_alarm"] is False
+
+
+async def test_component_39_ignored_without_z260iq_mode(coordinator: FluidraDataUpdateCoordinator) -> None:
+    """c39 means something else on other families, so it's only decoded for Z260iQ."""
+    device = _pinned_device(features={})
+    coordinator._process_component_state(device, "pool_001", 39, {"reportedValue": 1})
+    assert "air_temperature_alarm" not in device

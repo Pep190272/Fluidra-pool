@@ -54,10 +54,6 @@ class FluidraConnectionError(FluidraError):
     """Exception for connection errors."""
 
 
-class FluidraRateLimitError(FluidraError):
-    """Exception for rate limit errors."""
-
-
 class FluidraCircuitBreakerError(FluidraError):
     """Exception when circuit breaker is open."""
 
@@ -155,7 +151,7 @@ class RateLimiter:
 
     max_requests: int = RATE_LIMIT_REQUESTS
     window_seconds: float = RATE_LIMIT_WINDOW
-    _timestamps: deque = field(default_factory=deque)
+    _timestamps: deque[float] = field(default_factory=deque)
 
     def can_execute(self) -> bool:
         """Check if request can be executed within rate limits."""

@@ -1,7 +1,7 @@
 """Tests for fluidra_api/_schedules.py (SchedulesMixin).
 
 Focus: SUCCESS paths, the DM24049704 format conversion branches, and the
-set_schedule/clear_schedule/get_default_schedule methods. The request layer is
+set_schedule/clear_schedule methods. The request layer is
 mocked so no network access happens.
 """
 
@@ -18,6 +18,7 @@ from custom_components.fluidra_pool.const import (
     COMPONENT_SCHEDULE,
 )
 from custom_components.fluidra_pool.fluidra_api import FluidraPoolAPI
+from custom_components.fluidra_pool.fluidra_api._schedules import SchedulesMixin
 
 
 def _make_api(status: int = 200, raw_text: str = "") -> FluidraPoolAPI:
@@ -184,7 +185,8 @@ async def test_set_schedule_success_returns_true_and_puts_payload() -> None:
     assert args[0] == "PUT"
     url = args[1]
     assert url.startswith("https://api.fluidra-emea.com/generic/devices/DEV-1/components/")
-    assert f"/components/{COMPONENT_SCHEDULE}?deviceType=connected" in url
+    assert url.endswith(f"/components/{COMPONENT_SCHEDULE}")
+    assert kwargs.get("params") == {"deviceType": "connected"}
     assert kwargs["json_data"] == {"desiredValue": schedules}
     # content-type header is set on the auth headers.
     assert kwargs["headers"]["content-type"] == "application/json; charset=utf-8"
@@ -230,7 +232,8 @@ async def test_set_schedule_dm24049704_component_converts_payload() -> None:
     assert result is True
     args, kwargs = api._request.await_args
     url = args[1]
-    assert f"/components/{COMPONENT_DM24049704_SCHEDULE}?deviceType=connected" in url
+    assert url.endswith(f"/components/{COMPONENT_DM24049704_SCHEDULE}")
+    assert kwargs.get("params") == {"deviceType": "connected"}
     desired = kwargs["json_data"]["desiredValue"]
     # Converted (programs/dayPrograms) shape, not the raw cron list.
     assert isinstance(desired, dict)
@@ -239,14 +242,17 @@ async def test_set_schedule_dm24049704_component_converts_payload() -> None:
     assert desired["programs"][0]["slots"][0] == {"id": 0, "start": 1280, "end": 1536, "mode": 2}
 
 
-async def test_set_schedule_non_200_returns_false() -> None:
-    """A non-200 status logs the body and returns False."""
-    api = _make_api(status=409, raw_text="conflict-body")
+async def test_set_schedule_non_200_warns_and_returns_false(caplog) -> None:
+    """A non-200 status surfaces the rejection body at WARNING and returns False (Issue #89)."""
+    api = _make_api(status=409, raw_text="invalid scheduleUser")
 
-    result = await api.set_schedule("DEV-1", [])
+    with caplog.at_level("WARNING"):
+        result = await api.set_schedule("DEV-1", [])
 
     assert result is False
     api._request.assert_awaited_once()
+    assert "invalid scheduleUser" in caplog.text
+    assert "409" in caplog.text
 
 
 async def test_set_schedule_request_error_is_caught_returns_false() -> None:
@@ -283,25 +289,48 @@ async def test_clear_schedule_passes_component_id_through() -> None:
     assert result is True
     args, kwargs = api._request.await_args
     url = args[1]
-    assert f"/components/{COMPONENT_DM24049704_SCHEDULE}?deviceType=connected" in url
+    assert url.endswith(f"/components/{COMPONENT_DM24049704_SCHEDULE}")
+    assert kwargs.get("params") == {"deviceType": "connected"}
     # Empty list converted to empty programs/dayPrograms structure.
     desired = kwargs["json_data"]["desiredValue"]
     assert desired["programs"] == []
 
 
-# --- get_default_schedule -----------------------------------------------
+# --- get_pool_schedulers (Issue #144) ------------------------------------
 
 
-async def test_get_default_schedule_returns_single_template_entry() -> None:
-    """The default template is a one-element list with the expected fields."""
-    api = _make_api()
+class _FakeAPI(SchedulesMixin):
+    """Stub exposing only what SchedulesMixin touches for the read path."""
 
-    default = await api.get_default_schedule()
+    def __init__(self) -> None:
+        self.access_token: str | None = "fake-token"
+        self._request = AsyncMock()
+        self._build_auth_headers = MagicMock(return_value={"Authorization": "Bearer fake-token"})
+        self.ensure_valid_token = AsyncMock(return_value=True)
 
-    assert isinstance(default, list)
-    assert len(default) == 1
-    entry = default[0]
-    assert entry["enabled"] is True
-    assert entry["startTime"] == "08 30 * * 1,2,3,4,5,6,7"
-    assert entry["endTime"] == "09 59 * * 1,2,3,4,5,6,7"
-    assert entry["startActions"] == {"operationName": 1}
+
+async def test_get_pool_schedulers_returns_list_on_200() -> None:
+    api = _FakeAPI()
+    api._request.return_value = (200, [{"id": "s0", "name": "Filtration"}, "junk"], "[]")
+    entries = await api.get_pool_schedulers("pool-1")
+    assert entries == [{"id": "s0", "name": "Filtration"}]  # non-dict entries dropped
+    assert api._request.await_args.args[1].endswith("/pools/pool-1/schedulers")
+
+
+async def test_get_pool_schedulers_accepts_wrapped_payload() -> None:
+    api = _FakeAPI()
+    api._request.return_value = (200, {"schedulers": [{"id": "s1"}]}, "{}")
+    assert await api.get_pool_schedulers("pool-1") == [{"id": "s1"}]
+
+
+@pytest.mark.parametrize("payload", [None, "nope", {"unexpected": 1}])
+async def test_get_pool_schedulers_returns_none_on_unusable_payload(payload: Any) -> None:
+    api = _FakeAPI()
+    api._request.return_value = (200, payload, "")
+    assert await api.get_pool_schedulers("pool-1") is None
+
+
+async def test_get_pool_schedulers_returns_none_on_error_status() -> None:
+    api = _FakeAPI()
+    api._request.return_value = (404, None, "")
+    assert await api.get_pool_schedulers("pool-1") is None

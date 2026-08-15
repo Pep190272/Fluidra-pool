@@ -4,11 +4,11 @@ from __future__ import annotations
 
 import logging
 import time
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import aiohttp
-from homeassistant.components.climate import (
-    ClimateEntity,
+from homeassistant.components.climate import ClimateEntity
+from homeassistant.components.climate.const import (
     ClimateEntityFeature,
     HVACAction,
     HVACMode,
@@ -16,38 +16,33 @@ from homeassistant.components.climate import (
 from homeassistant.const import UnitOfTemperature
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import HomeAssistantError, ServiceValidationError
-from homeassistant.helpers.entity_platform import AddEntitiesCallback
+from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 
 from .api_resilience import FluidraError
+from .climate_behaviors import Z260iqBehavior, Z550Behavior, Z650iqBehavior, resolve_behavior
 from .const import (
+    CLIMATE_OPTIMISTIC_TIMEOUT,
     DOMAIN,
+    HEAT_COOL_ACTION_DEADBAND,
     LG_MODE_TO_VALUE,
     LG_PRESET_MODES,
-    LG_PRESET_SMART_COOLING,
-    LG_PRESET_SMART_HEAT_COOL,
     LG_PRESET_SMART_HEATING,
     LG_VALUE_TO_MODE,
-    Z260_MAX_TEMP,
-    Z260_MIN_TEMP,
-    Z260_TEMP_STEP,
-    Z550_MAX_TEMP,
-    Z550_MIN_TEMP,
-    Z550_MODE_AUTO,
-    Z550_MODE_COOLING,
-    Z550_MODE_HEATING,
-    Z550_PRESET_MODES,
-    Z550_PRESET_SMART,
-    Z550_PRESET_TO_VALUE,
-    Z550_STATE_COOLING,
-    Z550_STATE_HEATING,
-    Z550_STATE_IDLE,
-    Z550_TEMP_STEP,
-    Z550_VALUE_TO_PRESET,
+    Z550_STATE_NO_FLOW,
+    Z650_MODE_TO_VALUE,
+    Z650_PRESET_MODES,
+    Z650_PRESET_SMART_PLUS,
+    Z650_VALUE_TO_MODE,
     FluidraPoolConfigEntry,
 )
 from .device_registry import DeviceIdentifier
 from .entity import FluidraPoolControlEntity
+from .platform_setup import async_setup_dynamic_platform
 from .utils import mask_device_id
+
+if TYPE_CHECKING:
+    from .coordinator import FluidraDataUpdateCoordinator
+    from .fluidra_api import FluidraPoolAPI
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -57,24 +52,23 @@ PARALLEL_UPDATES = 0  # Coordinator handles all updates
 async def async_setup_entry(
     hass: HomeAssistant,
     config_entry: FluidraPoolConfigEntry,
-    async_add_entities: AddEntitiesCallback,
+    async_add_entities: AddConfigEntryEntitiesCallback,
 ) -> None:
-    """Set up Fluidra Pool climate entities."""
+    """Set up Fluidra Pool climate entities, including devices added later."""
     coordinator = config_entry.runtime_data.coordinator
 
-    entities = []
+    def _build(pool_id: str, device: dict[str, Any]) -> list[ClimateEntity]:
+        """Create climate entities for one device."""
+        entities: list[ClimateEntity] = []
+        device_id = device["device_id"]
 
-    # Use cached pools data instead of API call for faster startup
-    pools = coordinator.api.cached_pools or await coordinator.api.get_pools()
-    for pool in pools:
-        for device in pool["devices"]:
-            device_id = device.get("device_id")
+        # Create climate entities based on device registry
+        if DeviceIdentifier.should_create_entity(device, "climate"):
+            entities.append(FluidraHeatPumpClimate(coordinator, coordinator.api, pool_id, device_id))
 
-            # Create climate entities based on device registry
-            if device_id and DeviceIdentifier.should_create_entity(device, "climate"):
-                entities.append(FluidraHeatPumpClimate(coordinator, coordinator.api, pool["id"], device_id))
+        return entities
 
-    async_add_entities(entities)
+    await async_setup_dynamic_platform(config_entry, async_add_entities, _build)
 
 
 class FluidraHeatPumpClimate(FluidraPoolControlEntity, ClimateEntity):
@@ -90,7 +84,13 @@ class FluidraHeatPumpClimate(FluidraPoolControlEntity, ClimateEntity):
         "_pending_temperature",
     )
 
-    def __init__(self, coordinator, api, pool_id: str, device_id: str):
+    def __init__(
+        self,
+        coordinator: FluidraDataUpdateCoordinator,
+        api: FluidraPoolAPI,
+        pool_id: str,
+        device_id: str,
+    ) -> None:
         """Initialize the climate entity."""
         super().__init__(coordinator, api, pool_id, device_id)
         self._pending_temperature: float | None = None
@@ -131,7 +131,9 @@ class FluidraHeatPumpClimate(FluidraPoolControlEntity, ClimateEntity):
         # non-step-aligned service call) can't pin the UI to a stale setpoint.
         if self._pending_temperature is not None:
             confirmed = actual_temp is not None and abs(actual_temp - self._pending_temperature) < 0.05
-            expired = self._last_action_time is not None and time.time() - self._last_action_time > 5
+            expired = (
+                self._last_action_time is not None and time.time() - self._last_action_time > CLIMATE_OPTIMISTIC_TIMEOUT
+            )
             if confirmed or expired:
                 self._pending_temperature = None
                 self._last_action_time = None
@@ -143,29 +145,17 @@ class FluidraHeatPumpClimate(FluidraPoolControlEntity, ClimateEntity):
     @property
     def min_temp(self) -> float:
         """Return the minimum temperature."""
-        if DeviceIdentifier.has_feature(self.device_data, "z550_mode"):
-            return Z550_MIN_TEMP
-        if DeviceIdentifier.has_feature(self.device_data, "z260iq_mode"):
-            return Z260_MIN_TEMP
-        return 10.0
+        return resolve_behavior(self.device_data).min_temp
 
     @property
     def max_temp(self) -> float:
         """Return the maximum temperature."""
-        if DeviceIdentifier.has_feature(self.device_data, "z550_mode"):
-            return Z550_MAX_TEMP
-        if DeviceIdentifier.has_feature(self.device_data, "z260iq_mode"):
-            return Z260_MAX_TEMP
-        return 40.0
+        return resolve_behavior(self.device_data).max_temp
 
     @property
     def target_temperature_step(self) -> float:
         """Return the supported step of target temperature."""
-        if DeviceIdentifier.has_feature(self.device_data, "z550_mode"):
-            return Z550_TEMP_STEP
-        if DeviceIdentifier.has_feature(self.device_data, "z260iq_mode"):
-            return Z260_TEMP_STEP
-        return 1.0
+        return resolve_behavior(self.device_data).temp_step
 
     @property
     def supported_features(self) -> ClimateEntityFeature:
@@ -184,19 +174,15 @@ class FluidraHeatPumpClimate(FluidraPoolControlEntity, ClimateEntity):
     @property
     def hvac_modes(self) -> list[HVACMode]:
         """Return the list of available hvac operation modes."""
-        # Z550iQ+ supports heat/cool/auto
-        if DeviceIdentifier.has_feature(self.device_data, "z550_mode"):
-            return [HVACMode.OFF, HVACMode.HEAT, HVACMode.COOL, HVACMode.HEAT_COOL]
-        # Z260iQ supports heat/cool/heat_cool
-        if DeviceIdentifier.has_feature(self.device_data, "z260iq_mode"):
-            return [HVACMode.OFF, HVACMode.HEAT, HVACMode.COOL, HVACMode.HEAT_COOL]
-        return [HVACMode.OFF, HVACMode.HEAT]
+        return resolve_behavior(self.device_data).hvac_modes
 
     @property
     def preset_modes(self) -> list[str]:
         """Return available preset modes for heat pumps with this feature."""
-        if DeviceIdentifier.has_feature(self.device_data, "z550_mode"):
-            return Z550_PRESET_MODES
+        # Z550iQ+ has no controllable preset: component 17 is read-only and its
+        # values don't match a silence/smart/boost scheme (Issue #88).
+        if DeviceIdentifier.has_feature(self.device_data, "z650iq_mode"):
+            return Z650_PRESET_MODES
         if DeviceIdentifier.has_feature(self.device_data, "preset_modes"):
             return LG_PRESET_MODES
         return []
@@ -209,27 +195,16 @@ class FluidraHeatPumpClimate(FluidraPoolControlEntity, ClimateEntity):
         # Check for pending optimistic preset mode first
         if self._pending_preset_mode is not None and self._last_preset_action_time is not None:
             # Clear pending mode after 5 seconds
-            if time.time() - self._last_preset_action_time > 5:
+            if time.time() - self._last_preset_action_time > CLIMATE_OPTIMISTIC_TIMEOUT:
                 self._pending_preset_mode = None
                 self._last_preset_action_time = None
             else:
                 return self._pending_preset_mode
 
-        # Z550iQ+ preset modes from component 17
-        if DeviceIdentifier.has_feature(device_data, "z550_mode"):
-            z550_preset = device_data.get("z550_preset_reported")
-            if z550_preset is not None:
-                return Z550_VALUE_TO_PRESET.get(z550_preset, Z550_PRESET_SMART)
-            # Try to get from components
-            components = device_data.get("components", {})
-            if isinstance(components, dict) and "17" in components:
-                reported_value = components["17"].get("reportedValue")
-                if reported_value is not None:
-                    return Z550_VALUE_TO_PRESET.get(reported_value, Z550_PRESET_SMART)
-            return Z550_PRESET_SMART
-
-        # LG preset modes
-        if not DeviceIdentifier.has_feature(device_data, "preset_modes"):
+        # No controllable preset for devices without preset_modes (e.g. Z550iQ+).
+        if not DeviceIdentifier.has_feature(device_data, "preset_modes") and not DeviceIdentifier.has_feature(
+            device_data, "z650iq_mode"
+        ):
             return None
 
         # Get current mode from component 14 value
@@ -237,9 +212,13 @@ class FluidraHeatPumpClimate(FluidraPoolControlEntity, ClimateEntity):
         if isinstance(components, dict) and "14" in components:
             reported_value = components["14"].get("reportedValue")
             if reported_value is not None:
+                if DeviceIdentifier.has_feature(device_data, "z650iq_mode"):
+                    return Z650_VALUE_TO_MODE.get(reported_value, Z650_PRESET_SMART_PLUS)
                 return LG_VALUE_TO_MODE.get(reported_value, LG_PRESET_SMART_HEATING)
 
-        # Fallback to smart heating
+        # Fallback to family default
+        if DeviceIdentifier.has_feature(device_data, "z650iq_mode"):
+            return Z650_PRESET_SMART_PLUS
         return LG_PRESET_SMART_HEATING
 
     @property
@@ -248,8 +227,7 @@ class FluidraHeatPumpClimate(FluidraPoolControlEntity, ClimateEntity):
 
         # Check for pending optimistic HVAC mode first
         if self._pending_hvac_mode is not None and self._last_hvac_action_time is not None:
-            # Clear pending mode after 5 seconds
-            if time.time() - self._last_hvac_action_time > 5:
+            if time.time() - self._last_hvac_action_time > CLIMATE_OPTIMISTIC_TIMEOUT:
                 self._pending_hvac_mode = None
                 self._last_hvac_action_time = None
             else:
@@ -260,135 +238,33 @@ class FluidraHeatPumpClimate(FluidraPoolControlEntity, ClimateEntity):
             return HVACMode.HEAT
 
         device_data = self.device_data
+        return resolve_behavior(device_data).hvac_mode(device_data)
 
-        # Z550iQ+ specific mode handling
-        if DeviceIdentifier.has_feature(device_data, "z550_mode"):
-            # Check if heat pump is ON (component 21)
-            heat_pump_reported = device_data.get("heat_pump_reported")
-            if not heat_pump_reported:
-                return HVACMode.OFF
+    def _infer_heat_cool_action(self) -> HVACAction:
+        """Infer the running direction in Smart Heat+Cool (component 14 = 2).
 
-            # Get mode from component 16: 0=heating, 1=cooling, 2=auto
-            z550_mode = device_data.get("z550_mode_reported")
-            if z550_mode == Z550_MODE_HEATING:
-                return HVACMode.HEAT
-            if z550_mode == Z550_MODE_COOLING:
-                return HVACMode.COOL
-            if z550_mode == Z550_MODE_AUTO:
-                return HVACMode.HEAT_COOL
-            # Default to HEAT if mode unknown but pump is ON
-            return HVACMode.HEAT
-
-        # Z260iQ: ON/OFF from component 13, mode from component 14
-        if DeviceIdentifier.has_feature(device_data, "z260iq_mode"):
-            heat_pump_reported = device_data.get("heat_pump_reported")
-            if heat_pump_reported is not None and not bool(heat_pump_reported):
-                return HVACMode.OFF
-            mode_value = device_data.get("z260iq_mode_value")
-            if mode_value is not None:
-                # 0=Smart Heat, 3=Boost Heat, 4=Silence Heat → HEAT
-                # 1=Smart Cool, 5=Boost Cool, 6=Silence Cool → COOL
-                # 2=Smart H+C → HEAT_COOL
-                if mode_value in (0, 3, 4):
-                    return HVACMode.HEAT
-                if mode_value in (1, 5, 6):
-                    return HVACMode.COOL
-                if mode_value == 2:
-                    return HVACMode.HEAT_COOL
-            # Fallback: if ON, assume HEAT
-            return HVACMode.HEAT if bool(heat_pump_reported) else HVACMode.OFF
-
-        # For heat pumps with preset modes, use multiple sources like the switch
-        if DeviceIdentifier.has_feature(device_data, "preset_modes"):
-            # 1. heat_pump_reported from real-time polling
-            heat_pump_reported = device_data.get("heat_pump_reported")
-            if heat_pump_reported is not None:
-                return HVACMode.HEAT if bool(heat_pump_reported) else HVACMode.OFF
-
-            # 2. pump_reported (fallback for LG detected as pump)
-            pump_reported = device_data.get("pump_reported")
-            if pump_reported is not None:
-                return HVACMode.HEAT if bool(pump_reported) else HVACMode.OFF
-
-            # 3. is_running (base state for pumps)
-            if device_data.get("is_running", False):
-                return HVACMode.HEAT
-
-            # 4. Fallback on is_heating
-            return HVACMode.HEAT if device_data.get("is_heating", False) else HVACMode.OFF
-
-        # Standard heat pump logic
-        # 1. Priority: heat_pump_reported (specific heat pump state)
-        heat_pump_reported = device_data.get("heat_pump_reported")
-        if heat_pump_reported is not None:
-            if heat_pump_reported:
-                return HVACMode.HEAT
-            return HVACMode.OFF
-
-        # 2. Fallback: is_heating (compatibility)
-        if device_data.get("is_heating", False):
-            return HVACMode.HEAT
-
-        # 3. Fallback: is_running (état général)
-        if device_data.get("is_running", False):
-            return HVACMode.HEAT
-
-        return HVACMode.OFF
+        The hardware exposes no direction register in this mode (unlike the
+        Z550's component 61), so mirror the unit's own regulation: compare the
+        water temperature to the setpoint with a ±HEAT_COOL_ACTION_DEADBAND
+        deadband (Issue #139). Inside the deadband the setpoint is satisfied
+        and the compressor rests — report IDLE. Stays a heuristic until a real
+        state register is identified.
+        """
+        current = self.current_temperature
+        target = self.target_temperature
+        if current is None or target is None:
+            return HVACAction.IDLE
+        if target - current > HEAT_COOL_ACTION_DEADBAND:
+            return HVACAction.HEATING
+        if current - target > HEAT_COOL_ACTION_DEADBAND:
+            return HVACAction.COOLING
+        return HVACAction.IDLE
 
     @property
     def hvac_action(self) -> HVACAction | None:
         """Return the current hvac action."""
         device_data = self.device_data
-
-        # Z550iQ+ uses component 61 for detailed state
-        if DeviceIdentifier.has_feature(device_data, "z550_mode"):
-            z550_state = device_data.get("z550_state_reported")
-            if z550_state == Z550_STATE_HEATING:
-                return HVACAction.HEATING
-            if z550_state == Z550_STATE_COOLING:
-                return HVACAction.COOLING
-            if z550_state == Z550_STATE_IDLE:
-                return HVACAction.IDLE
-            # No flow or unknown state = OFF
-            return HVACAction.OFF
-
-        # Z260iQ: derive the action from ON/OFF + mode direction (component 14),
-        # not is_heating — otherwise an actively-cooling unit reports HEATING.
-        if DeviceIdentifier.has_feature(device_data, "z260iq_mode"):
-            heat_pump_reported = device_data.get("heat_pump_reported")
-            if heat_pump_reported is not None and not bool(heat_pump_reported):
-                return HVACAction.OFF
-            if device_data.get("no_flow_alarm"):
-                return HVACAction.IDLE
-            mode_value = device_data.get("z260iq_mode_value")
-            if mode_value in (1, 5, 6):  # Smart/Boost/Silence Cool
-                return HVACAction.COOLING
-            if mode_value in (0, 3, 4):  # Smart/Boost/Silence Heat
-                return HVACAction.HEATING
-            if mode_value == 2:  # Smart Heat+Cool: direction unknown
-                return HVACAction.IDLE
-            return HVACAction.HEATING if bool(heat_pump_reported) else HVACAction.OFF
-
-        # LG heat pumps: decode the same component-14 direction values.
-        if DeviceIdentifier.has_feature(device_data, "preset_modes"):
-            on = device_data.get("heat_pump_reported")
-            if on is None:
-                on = device_data.get("pump_reported")
-            if on is None:
-                on = device_data.get("is_running")
-            if not on:
-                return HVACAction.OFF
-            components = device_data.get("components", {})
-            reported = components.get("14", {}).get("reportedValue") if isinstance(components, dict) else None
-            if reported in (1, 5, 6):  # cooling presets
-                return HVACAction.COOLING
-            if reported == 2:  # heat_cool: direction unknown
-                return HVACAction.IDLE
-            return HVACAction.HEATING
-
-        if device_data.get("is_heating", False):
-            return HVACAction.HEATING
-        return HVACAction.OFF
+        return resolve_behavior(device_data).hvac_action(device_data, self._infer_heat_cool_action)
 
     @property
     def icon(self) -> str:
@@ -399,6 +275,7 @@ class FluidraHeatPumpClimate(FluidraPoolControlEntity, ClimateEntity):
 
     async def async_set_hvac_mode(self, hvac_mode: HVACMode) -> None:
         """Set new target hvac mode."""
+        self._ensure_pool_writable()
         try:
             # Optimistic update - show immediately in UI
 
@@ -406,73 +283,31 @@ class FluidraHeatPumpClimate(FluidraPoolControlEntity, ClimateEntity):
             self._last_hvac_action_time = time.time()
             self.async_write_ha_state()
 
-            success = False
+            behavior = resolve_behavior(self.device_data)
+            # Only the Z260iQ and Z650iQ families need the current preset (to
+            # keep the specific Smart/Boost/Silence/Ecosilence variant instead
+            # of resetting to their default on every mode write), and only on
+            # a non-OFF write — their OFF branch ignores current_preset, and
+            # the original never read self.preset_mode on OFF either. Reading
+            # it more widely would needlessly trigger the property's
+            # optimistic-preset expiry side effect (clearing an expired
+            # _pending_preset_mode) on paths where the original left it
+            # untouched.
+            current_preset = (
+                self.preset_mode
+                if isinstance(behavior, (Z260iqBehavior, Z650iqBehavior)) and hvac_mode != HVACMode.OFF
+                else None
+            )
+            success = await behavior.async_set_hvac_mode(
+                self._api, self._pool_id, self._device_id, hvac_mode, current_preset
+            )
 
-            # Z550iQ+ specific mode handling
-            if DeviceIdentifier.has_feature(self.device_data, "z550_mode"):
-                if hvac_mode == HVACMode.OFF:
-                    # Turn OFF: component 21 = 0
-                    success = await self._api.control_device_component(self._device_id, 21, 0)
-                else:
-                    # Turn ON first: component 21 = 1
-                    success = await self._api.control_device_component(self._device_id, 21, 1)
-                    if success:
-                        # Set mode: component 16 (0=heating, 1=cooling, 2=auto)
-                        mode_value: int | None = None
-                        if hvac_mode == HVACMode.HEAT:
-                            mode_value = Z550_MODE_HEATING
-                        elif hvac_mode == HVACMode.COOL:
-                            mode_value = Z550_MODE_COOLING
-                        elif hvac_mode == HVACMode.HEAT_COOL:
-                            mode_value = Z550_MODE_AUTO
-                        if mode_value is not None:
-                            success = await self._api.control_device_component(self._device_id, 16, mode_value)
-                            if not success:
-                                # Power was just turned on but the mode write failed:
-                                # roll power back off so the physical device matches the
-                                # reverted optimistic UI instead of running in a stale mode.
-                                await self._api.control_device_component(self._device_id, 21, 0)
-            elif DeviceIdentifier.has_feature(self.device_data, "z260iq_mode"):
-                # Z260iQ: ON/OFF via component 13, mode via component 14
-                if hvac_mode == HVACMode.OFF:
-                    success = await self._api.control_device_component(self._device_id, 13, 0)
-                else:
-                    # Determine component 14 value from target HVAC mode:
-                    # Use the current preset to preserve the specific mode, or default to Smart variant
-                    current_preset = self.preset_mode
-                    if hvac_mode == HVACMode.HEAT:
-                        # Keep current preset if it's already a HEAT preset, else default to Smart Heat
-                        mode_value = LG_MODE_TO_VALUE.get(
-                            current_preset or LG_PRESET_SMART_HEATING, LG_MODE_TO_VALUE[LG_PRESET_SMART_HEATING]
-                        )
-                        if mode_value not in (0, 3, 4):
-                            mode_value = LG_MODE_TO_VALUE[LG_PRESET_SMART_HEATING]
-                    elif hvac_mode == HVACMode.COOL:
-                        mode_value = LG_MODE_TO_VALUE.get(
-                            current_preset or LG_PRESET_SMART_COOLING, LG_MODE_TO_VALUE[LG_PRESET_SMART_COOLING]
-                        )
-                        if mode_value not in (1, 5, 6):
-                            mode_value = LG_MODE_TO_VALUE[LG_PRESET_SMART_COOLING]
-                    elif hvac_mode == HVACMode.HEAT_COOL:
-                        mode_value = LG_MODE_TO_VALUE[LG_PRESET_SMART_HEAT_COOL]
-                    else:
-                        self._pending_hvac_mode = None
-                        self._last_hvac_action_time = None
-                        return
-                    success = await self._api.control_device_component(self._device_id, 14, mode_value)
-                    if success:
-                        success = await self._api.control_device_component(self._device_id, 13, 1)
-            else:
-                # Standard heat pump (LG, etc.)
-                if hvac_mode == HVACMode.HEAT:
-                    success = await self._api.start_pump(self._device_id)
-                elif hvac_mode == HVACMode.OFF:
-                    success = await self._api.stop_pump(self._device_id)
-                else:
-                    # Clear optimistic state for unsupported modes
-                    self._pending_hvac_mode = None
-                    self._last_hvac_action_time = None
-                    return
+            if success is None:
+                # Unsupported hvac_mode for this family: clear optimistic
+                # state silently, like the pre-refactor early return.
+                self._pending_hvac_mode = None
+                self._last_hvac_action_time = None
+                return
 
             if success:
                 await self.coordinator.async_request_refresh()
@@ -502,6 +337,7 @@ class FluidraHeatPumpClimate(FluidraPoolControlEntity, ClimateEntity):
 
     async def async_set_temperature(self, **kwargs: Any) -> None:
         """Set new target temperature."""
+        self._ensure_pool_writable()
         temperature = kwargs.get("temperature")
         if temperature is None:
             return
@@ -571,6 +407,7 @@ class FluidraHeatPumpClimate(FluidraPoolControlEntity, ClimateEntity):
 
     async def async_set_preset_mode(self, preset_mode: str) -> None:
         """Set new preset mode for heat pumps with this feature."""
+        self._ensure_pool_writable()
         try:
             # Optimistic update - show immediately in UI
 
@@ -580,16 +417,15 @@ class FluidraHeatPumpClimate(FluidraPoolControlEntity, ClimateEntity):
 
             success = False
 
-            # Z550iQ+ uses component 17 for preset modes
-            if DeviceIdentifier.has_feature(self.device_data, "z550_mode"):
-                if preset_mode not in Z550_PRESET_TO_VALUE:
+            if DeviceIdentifier.has_feature(self.device_data, "z650iq_mode"):
+                if preset_mode not in Z650_MODE_TO_VALUE:
                     self._pending_preset_mode = None
                     self._last_preset_action_time = None
                     return
-                mode_value = Z550_PRESET_TO_VALUE[preset_mode]
-                success = await self._api.control_device_component(self._device_id, 17, mode_value)
+                mode_value = Z650_MODE_TO_VALUE[preset_mode]
+                success = await self._api.control_device_component(self._device_id, 14, mode_value)
             elif DeviceIdentifier.has_feature(self.device_data, "preset_modes"):
-                # LG heat pumps use component 14
+                # LG heat pumps use component 14 (Z550iQ+ has no controllable preset).
                 if preset_mode not in LG_MODE_TO_VALUE:
                     self._pending_preset_mode = None
                     self._last_preset_action_time = None
@@ -626,9 +462,13 @@ class FluidraHeatPumpClimate(FluidraPoolControlEntity, ClimateEntity):
             ) from err
 
     @property
-    def extra_state_attributes(self) -> dict:
+    def extra_state_attributes(self) -> dict[str, Any]:
         """Return extra state attributes."""
         device_data = self.device_data
+        # z550_mode and z260iq_mode are mutually exclusive across every real
+        # device config, so resolving the behavior once here is equivalent to
+        # two independent device-feature checks below.
+        behavior = resolve_behavior(device_data)
         attrs = {
             "device_type": "heat_pump",
             "device_id": self._device_id,
@@ -675,7 +515,7 @@ class FluidraHeatPumpClimate(FluidraPoolControlEntity, ClimateEntity):
             attrs["ip_address"] = device_data["ip_address"]
 
         # Z550iQ+ specific attributes
-        if DeviceIdentifier.has_feature(device_data, "z550_mode"):
+        if isinstance(behavior, Z550Behavior):
             # Air temperature
             air_temp = device_data.get("air_temperature")
             if air_temp is not None:
@@ -694,24 +534,45 @@ class FluidraHeatPumpClimate(FluidraPoolControlEntity, ClimateEntity):
                 state_names = {0: "idle", 2: "heating", 3: "cooling", 11: "no_flow"}
                 attrs["z550_state"] = state_names.get(z550_state, f"unknown ({z550_state})")
                 attrs["z550_state_raw"] = z550_state
+                # Explicit no-flow flag for external-pump setups (Issue #88).
+                attrs["no_flow"] = z550_state == Z550_STATE_NO_FLOW
 
-            # Preset mode (0=silence, 1=smart, 2=boost)
-            z550_preset = device_data.get("z550_preset_reported")
-            if z550_preset is not None:
-                preset_names = {0: "silence", 1: "smart", 2: "boost"}
-                attrs["z550_preset"] = preset_names.get(z550_preset, f"unknown ({z550_preset})")
-                attrs["z550_preset_raw"] = z550_preset
+            # Total running hours (component 60).
+            running_hours = device_data.get("running_hours")
+            if running_hours is not None:
+                attrs["running_hours"] = running_hours
 
-            # Raw component values for debugging
+            # Raw component values for debugging (18 = water-flow indicator, values
+            # to be confirmed; 60 = total running hours).
             attrs["component_21_raw"] = device_data.get("components", {}).get("21", {}).get("reportedValue")
             attrs["component_16_raw"] = device_data.get("components", {}).get("16", {}).get("reportedValue")
             attrs["component_17_raw"] = device_data.get("components", {}).get("17", {}).get("reportedValue")
+            attrs["component_18_raw"] = device_data.get("components", {}).get("18", {}).get("reportedValue")
             attrs["component_37_raw"] = device_data.get("components", {}).get("37", {}).get("reportedValue")
             attrs["component_40_raw"] = device_data.get("components", {}).get("40", {}).get("reportedValue")
+            attrs["component_60_raw"] = device_data.get("components", {}).get("60", {}).get("reportedValue")
             attrs["component_61_raw"] = device_data.get("components", {}).get("61", {}).get("reportedValue")
 
-        # Z260iQ specific attributes
-        if DeviceIdentifier.has_feature(device_data, "z260iq_mode"):
+        # Z650iQ specific attributes
+        if DeviceIdentifier.has_feature(device_data, "z650iq_mode"):
+            components = device_data.get("components", {})
+
+            def _raw(comp_id: int) -> object:
+                return components.get(str(comp_id), {}).get("reportedValue") if isinstance(components, dict) else None
+
+            attrs["heat_pump_on"] = bool(device_data.get("heat_pump_reported"))
+            attrs["preset_mode_raw"] = _raw(14)
+            attrs["water_temperature"] = device_data.get("water_temperature")
+            attrs["air_temperature"] = device_data.get("air_temperature")
+            attrs["no_flow_alarm"] = device_data.get("no_flow_alarm")
+            attrs["running_hours"] = device_data.get("running_hours")
+            attrs["compressor_running_hours"] = device_data.get("compressor_running_hours")
+            attrs["power_w"] = device_data.get("pump_power")
+            attrs["rssi_dbm"] = device_data.get("signal_strength_component")
+            attrs["firmware"] = device_data.get("firmware_version_component")
+
+        # Z260iQ specific attributes (not Z650iQ — separate branch above)
+        elif isinstance(behavior, Z260iqBehavior):
             air_temp = device_data.get("air_temperature")
             if air_temp is not None:
                 attrs["air_temperature"] = air_temp
