@@ -420,6 +420,101 @@ Si una entidad tiene `last_reported` muy anterior al de sus compañeras, el dato
 Si todas comparten `last_reported` y solo una tiene el `last_updated` viejo, esa magnitud
 simplemente no se mueve. **Son diagnósticos opuestos y se distinguen solo mirando los dos campos.**
 
+## Velocidad de subida del pH sin oposición
+
+Con la consigna en 7,7 y el pH por debajo, la bomba de ácido **no dosifica**. Eso deja medir la
+subida limpia que provoca la célula:
+
+```
+13:06  7,66   →   14:52  7,70      0,04 en 1 h 45 min
+                                    ≈ 0,023 pH/hora
+                                    ≈ 0,37 pH/día  (16 h de filtración)
+```
+
+Contraste que lo valida: durante los dos días con el equipo desconectado y la bomba bloqueada, el pH
+llegó a **8,87**. Partiendo de rango normal, a 0,37 diarios, cuadra.
+
+**Consecuencia:** subir la consigna es una tregua, no una solución. La de 7,7 duró una hora y tres
+cuartos. No subir a 7,8 (techo del equipo): compraría horas, no días, y a más pH el cloro rinde
+peor. Nada aguanta contra 0,37 de pH al día salvo bajar el TAC.
+
+**Táctica para los días de tratamiento:** bajar la producción de cloración del 60 %. Durante el
+tratamiento el pH estará en 7,0–7,4, y a ese pH el cloro rinde mucho más que a 7,7 — se puede
+producir menos manteniendo el poder desinfectante. Así el ácido trabaja en bajar el TAC en vez de
+pelear con la célula. Vigilando que el ORP no baje de 650.
+
+## Entidades huérfanas en Home Assistant
+
+`unavailable` tiene dos causas opuestas, y se tratan al revés. El atributo `restored` las separa:
+
+| Estado | Qué significa | Qué hacer |
+|---|---|---|
+| `unavailable` **sin** `restored` | la integración la provee, el dato no llega ahora | **desactivar** — borrarla la recrea |
+| `unavailable` **con** `restored: true` | nadie la provee, es un resto del registro | **borrar** — es basura |
+
+Comprobación:
+
+```bash
+# ¿la provee la integración?
+POST /api/template   {"template": "{{ integration_entities('fluidra_pool') }}"}
+
+# ¿es un resto?
+GET /api/states/<entity_id>     → buscar  "restored": true
+
+# listar todas las huérfanas de golpe
+GET /api/states   → filtrar por attributes.restored
+```
+
+**Caso `CLORIB`** (`sensor.piscina_chlorinator_cloro_libre`): `restored: true` y ausente de
+`integration_entities`. Borrada el 2026-08-15; `GET` de la entidad devuelve **404** y el total baja
+de 61 a 60.
+
+No iba a volver nunca: el equipo es salino, mide **ORP/redox**, no cloro libre. Ese sensor no existe
+en el hardware y la app oficial tampoco lo muestra (episodio 1). Que upstream dejara de crear la
+entidad en la v2.78.3 es la confirmación — la quitaron porque no había nada que mapear.
+
+> En junio hubo que **desactivar** las tres fantasma en vez de borrarlas, porque la v2.43.5 todavía
+> las creaba. La diferencia no es de criterio: es que la integración cambió.
+
+**Quedan tres huérfanas que NO hay que borrar:** `tts.piper`, `stt.faster_whisper` y
+`wake_word.openwakeword`. Sus integraciones existen pero están en `setup_retry` con *Unable to
+connect* — los servicios de voz de Wyoming no arrancan. Volverían en cuanto conectaran. El problema
+real ahí son los contenedores, no el registro de entidades.
+
+## Cómo distinguir un corte de corriente de un fallo de conexión
+
+Los dos dejan las entidades en `unavailable`. Se separan mirando **la antigüedad de los datos**:
+
+| | Corte de corriente (ciclo de filtración) | Fallo de conexión |
+|---|---|---|
+| Antigüedad | minutos: el último dato es de justo antes del corte | horas o días |
+| Valores al volver | distintos, frescos | **idénticos**, hasta el decimal |
+| Recuperación | sola, al volver la corriente | nunca sin intervención |
+
+El clorador cae con el grupo, así que quedarse `unavailable` durante la ventana de parada es
+**comportamiento normal**, no una avería.
+
+> **Una desconexión NUNCA crea entidades huérfanas.** Comprobado con el equipo caído: sus entidades
+> quedan en `unavailable` **sin** el atributo `restored`, porque la integración las sigue proveyendo
+> — simplemente sin dato. Si aparece `restored: true`, la causa es otra: nadie provee ya esa
+> entidad. Son dos diagnósticos que no se solapan.
+
+Ojo al leer el historial durante una parada: puede aparecer **un sondeo suelto con dato cacheado**
+en mitad de la ventana sin corriente. El 2026-08-15 el equipo cayó a las 15:09:40 y a las 15:42:20
+hubo una lectura aislada con los mismos valores, antes de volver a `unavailable`. Ese repunte no
+significa que el equipo despertara: es la nube sirviendo su último snapshot.
+
+## El punto de equilibrio del pH
+
+Tras subir la consigna a 7,7, el pH se mantuvo **clavado en 7,70 durante 51 minutos** (14:51:55 →
+15:42:53) con la célula funcionando, y sin una sola alarma.
+
+La bomba **sí puede sostener 7,7**; lo que no podía era alcanzar 7,61. Ese es el punto donde su
+capacidad iguala la subida de la célula con TAC 240.
+
+Subir la consigna no fue solo silenciar la alarma: fue colocarla donde el equipo puede trabajar. Al
+bajar el TAC, ese punto de equilibrio baja con él y la consigna podrá volver a 7,2–7,4.
+
 ## Conclusión
 
 Las tres alarmas de este verano —junio, 11 de agosto y hoy— salen del mismo sitio. Con la bomba
