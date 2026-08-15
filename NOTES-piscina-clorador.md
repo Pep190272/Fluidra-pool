@@ -504,16 +504,33 @@ en mitad de la ventana sin corriente. El 2026-08-15 el equipo cayó a las 15:09:
 hubo una lectura aislada con los mismos valores, antes de volver a `unavailable`. Ese repunte no
 significa que el equipo despertara: es la nube sirviendo su último snapshot.
 
-## El punto de equilibrio del pH
+## El "punto de equilibrio" que no existió — conclusión retirada
 
-Tras subir la consigna a 7,7, el pH se mantuvo **clavado en 7,70 durante 51 minutos** (14:51:55 →
-15:42:53) con la célula funcionando, y sin una sola alarma.
+> ⚠️ **Esta sección documenta un error de razonamiento propio. Se conserva porque el error es más
+> instructivo que la conclusión.**
 
-La bomba **sí puede sostener 7,7**; lo que no podía era alcanzar 7,61. Ese es el punto donde su
-capacidad iguala la subida de la célula con TAC 240.
+Tras subir la consigna a 7,7 se observó: 40 minutos sin alarmas, y el pH **clavado en 7,70 durante
+51 minutos** (14:51:55 → 15:42:53). De ahí se concluyó que la bomba *sí podía sostener 7,7* aunque no
+alcanzara 7,61, y que se había dado con su punto de equilibrio.
 
-Subir la consigna no fue solo silenciar la alarma: fue colocarla donde el equipo puede trabajar. Al
-bajar el TAC, ese punto de equilibrio baja con él y la consigna podrá volver a 7,2–7,4.
+**La conclusión era falsa.** La bomba de pH llevaba parada desde las ~13:43, apagada a mano. Y una
+bomba apagada:
+
+- no puede disparar un corte por tiempo de dosificación → de ahí los "40 minutos limpios"
+- no sujeta nada → el pH "clavado" era simplemente que aún no había cruzado a 7,71
+
+Las dos observaciones se explican igual de bien con las dos hipótesis. **No eran evidencia de nada**,
+y se presentaron como si lo fueran.
+
+Lo confirma el ritmo de subida: 0,023 pH/h por la mañana y 0,037 pH/h por la tarde. **Las dos son
+subidas sin oposición**; la diferencia es la hora del día, no la bomba.
+
+> **Lección de método:** antes de atribuir una mejora a un cambio, comprobar que no hay una segunda
+> variable que se movió a la vez. Aquí el cambio de consigna y el paro de la bomba ocurrieron con
+> diez minutos de diferencia, y se le adjudicó el mérito al primero sin descartar el segundo.
+>
+> Y el corolario operativo: **`PUMPSTOP PH` ausente no significa que la bomba esté bien.** Puede
+> significar que no está funcionando en absoluto. La ausencia de alarma no es señal de salud.
 
 ## Horas de filtración: medidas, no estimadas
 
