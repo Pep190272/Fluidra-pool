@@ -608,6 +608,67 @@ El reparto definitivo debe cumplir dos cosas a la vez: las 15–16 h diarias, y 
 depuradora en marcha que cubran las tomas del tratamiento** (mañana, tarde y noche, separadas 6–8 h,
 con 1 h de filtración posterior a cada toma).
 
+## Banda muerta confirmada
+
+La hipótesis se resolvió sola, y antes de lo previsto:
+
+```
+18:16   pH 7,74   desviación 0,04   →  bomba parada, sin aviso
+18:38   pH 7,77   desviación 0,07   →  bomba dosificando  →  PUMPSTOP PH a los ~14 min
+```
+
+**El umbral está entre 0,04 y 0,07**, coherente con los 0,05 de desviación que dosificaban por la
+mañana (consigna 7,61 con pH 7,66). La banda muerta es de ~0,05.
+
+De paso queda demostrado que **la bomba funciona**: dosificó catorce minutos seguidos. Lo que no
+puede es mover el pH contra el TAC 240.
+
+> El equipo **rearma la alarma solo** pasado un rato: bloquea, espera y reintenta. Por eso parecía ir
+> y venir durante el día.
+
+## Primera dosis manual de Baja TA — resultados
+
+1 kg de bisulfato sódico en polvo, diluido en 10-12 L de agua de la piscina, vertido paseando por la
+parte honda y lejos de los chorros, con la depuradora en marcha.
+
+```
+19:05   pH 7,74   ORP 686
+19:51   pH 7,33   ORP 700
+19:54   pH 7,30   ORP 701
+```
+
+**Bajada de 0,41 con 1 kg.** La previsión cruzando las equivalencias de la tabla era ~0,4. El
+producto rinde lo que dice la etiqueta en esta agua, así que la escala `1 kg = 10 puntos de TAC` es
+fiable para planificar.
+
+### El techo del ORP lo pone el pH — demostrado
+
+Todo el día pegado a 683-686 sin poder pasar de ahí, con la célula al 60 % y horas de filtración de
+sobra. Cuatro décimas menos de pH y rompe el techo en diez minutos:
+
+```
+686  →  691  →  715  →  708  →  701
+```
+
+> **Regla que sale de aquí: las horas de filtración ponen el SUELO del ORP; el pH pone el TECHO.**
+> Son dos palancas distintas y hacen falta las dos. Más horas no llevan el redox a los 750 de
+> consigna si el pH está alto.
+
+### El falso mínimo al verter
+
+```
+19:45:54   7,49
+19:47:00   6,79      ← la nube sin mezclar pasando por la sonda
+19:47:34   7,14
+19:48:42   7,36
+```
+
+Ese 6,79 **no es el pH de la piscina**. La sonda está en la tubería y lee lo que le llega; durante
+unos segundos le llegó agua de la zona de vertido. Se recupera solo en dos minutos.
+
+**No corregir nunca sobre esa lectura.** Y es justo el motivo por el que se vierte *paseando* y con
+la filtración en marcha: quieto en un punto, esa nube es mucho más concentrada y dura mucho más.
+
 ## Conclusión
 
 Las tres alarmas de este verano —junio, 11 de agosto y hoy— salen del mismo sitio. Con la bomba
