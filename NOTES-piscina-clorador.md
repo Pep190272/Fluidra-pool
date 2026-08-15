@@ -513,24 +513,46 @@ Tras subir la consigna a 7,7 se observó: 40 minutos sin alarmas, y el pH **clav
 51 minutos** (14:51:55 → 15:42:53). De ahí se concluyó que la bomba *sí podía sostener 7,7* aunque no
 alcanzara 7,61, y que se había dado con su punto de equilibrio.
 
-**La conclusión era falsa.** La bomba de pH llevaba parada desde las ~13:43, apagada a mano. Y una
-bomba apagada:
+**La conclusión no se sostiene**, porque la bomba de suministro de pH **no estaba dosificando**
+durante ese rato. Y una bomba parada:
 
 - no puede disparar un corte por tiempo de dosificación → de ahí los "40 minutos limpios"
 - no sujeta nada → el pH "clavado" era simplemente que aún no había cruzado a 7,71
 
-Las dos observaciones se explican igual de bien con las dos hipótesis. **No eran evidencia de nada**,
-y se presentaron como si lo fueran.
+Las dos observaciones se explican igual de bien con o sin punto de equilibrio. **No eran evidencia de
+nada**, y se presentaron como si lo fueran.
 
-Lo confirma el ritmo de subida: 0,023 pH/h por la mañana y 0,037 pH/h por la tarde. **Las dos son
+Lo respalda el ritmo de subida: 0,023 pH/h por la tarde y 0,037 pH/h al anochecer. **Las dos son
 subidas sin oposición**; la diferencia es la hora del día, no la bomba.
 
+### Hipótesis abierta: banda muerta del controlador
+
+A las 18:33, con el grupo encendido desde las 17:02, la bomba seguía parada y **sin ningún aviso**,
+teniendo el pH por encima de la consigna:
+
+```
+consigna 7,70   ·   pH 7,74   →   desviación 0,04   →   no dosifica
+consigna 7,61   ·   pH 7,66   →   desviación 0,05   →   sí dosificaba → PUMPSTOP PH
+```
+
+Encaja con que el controlador tenga una **banda muerta** de ~0,05: no arranca la bomba hasta que la
+desviación la supera, para no estar conmutando por centésimas.
+
+Si es así, subir la consigna sí sirvió, pero **no por el motivo que se había escrito**: no existe
+ningún punto donde la bomba sostenga el pH — simplemente la desviación cayó dentro de la banda muerta
+y el equipo dejó de intentarlo.
+
+**Pendiente de confirmar.** El pH sube ~0,03/h, así que la desviación llegará a 0,10 por sí sola. Si
+la bomba arranca ahí, la banda muerta queda demostrada. Si sigue parada, hay otra causa y toca
+revisar la configuración del equipo.
+
 > **Lección de método:** antes de atribuir una mejora a un cambio, comprobar que no hay una segunda
-> variable que se movió a la vez. Aquí el cambio de consigna y el paro de la bomba ocurrieron con
-> diez minutos de diferencia, y se le adjudicó el mérito al primero sin descartar el segundo.
+> variable que se movió a la vez. Aquí el cambio de consigna y el hecho de que la bomba no estuviera
+> dosificando coincidieron en el tiempo, y se le adjudicó el mérito al primero sin descartar el
+> segundo.
 >
 > Y el corolario operativo: **`PUMPSTOP PH` ausente no significa que la bomba esté bien.** Puede
-> significar que no está funcionando en absoluto. La ausencia de alarma no es señal de salud.
+> significar que no está dosificando en absoluto. La ausencia de alarma no es señal de salud.
 
 ## Horas de filtración: medidas, no estimadas
 
