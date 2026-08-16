@@ -6,6 +6,34 @@
 
 ---
 
+> # ⚠️ PLAN SUSPENDIDO — NO EJECUTAR
+>
+> **2026-08-16.** El TAC de 240 sobre el que se calculó todo este plan **no está confirmado** y
+> probablemente es falso. Es una medición del 11-08 cuyo método no quedó registrado, y nunca se
+> verificó con un segundo instrumento.
+>
+> La dosis manual del 15-08 fue, sin pretenderlo, una titulación ácido-base real: 1 kg de bisulfato
+> sódico = 0,208 meq/L de ácido, y el pH respondió 7,74 → 7,28. Resolviendo el equilibrio del
+> carbonato, esa respuesta corresponde a una alcalinidad de **~150 mg/L**, no 240.
+>
+> | TAC supuesto | Bajada de pH que predice | Observada |
+> |---|---|---|
+> | 240 | −0,31 | |
+> | **~150** | **−0,46** | **−0,46** |
+> | 40 (tira reactiva del 16-08) | −1,00 | |
+>
+> Los dos sesgos del cálculo —desgasificación de CO₂ durante la medición y producto sin disolver—
+> empujan a la baja: **150 es el techo, no el suelo.**
+>
+> **El riesgo de ejecutar este plan como está:** los 30 L calculados para bajar 240 → 120 dejarían
+> un agua de partida real de ~150 en **TAC ~30**. Agua agresiva, que ataca juntas, gresite y el
+> recubrimiento de los electrodos de la célula. Sobre 150, el objetivo de 120 solo pide **~7,5 L**.
+>
+> **Antes de reanudar:** medir la alcalinidad por titulación de gotas (o análisis en tienda) y
+> recalcular las cantidades de las secciones 2 y 5. No comprar producto hasta tener ese número.
+
+---
+
 ## 1. Situación de partida
 
 | Parámetro | Medido | Objetivo |
