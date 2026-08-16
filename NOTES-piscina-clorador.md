@@ -676,3 +676,279 @@ sana, producto disponible e inyección limpia, `PUMPSTOP PH` es un **síntoma de
 un fallo mecánico.
 
 **El TAC es lo único que queda por arreglar** — y, en segundo plano, las horas de filtración.
+
+> ⚠️ **La magnitud de ese TAC quedó en entredicho al día siguiente.** El diagnóstico cualitativo
+> —alcalinidad alta frenando la regulación— se mantiene; el número 240 no. Ver **Episodio 5**.
+
+---
+
+# Episodio 5 — 2026-08-16: el TAC 240 se cae
+
+## Síntoma
+
+Medición con **tiras reactivas**: cloro libre OK, pH en banda, y **alcalinidad 40**. El plan entero
+(`plan-bajar-alcalinidad-piscina-2026-08-11.md`, 30 L de producto en 6 días) está calculado sobre un
+**TAC de 240**. Entre 40 y 240 no hay margen de error: hay un instrumento mintiendo.
+
+## El árbitro: una titulación que hicimos sin querer
+
+La dosis manual del día 15 fue, sin pretenderlo, **una titulación ácido-base con el pH registrado
+minuto a minuto**. Eso permite calcular la alcalinidad sin ningún reactivo.
+
+```
+1 kg de bisulfato sódico (NaHSO₄, M = 120,06 g/mol)
+  = 8,33 mol de H⁺  en 40 m³
+  = 0,208 meq/L de ácido añadido
+
+pH:  7,74 (19:05)  →  mínimo 7,28 (19:56)
+```
+
+Resolviendo el equilibrio del carbonato (pK₁ = 6,35) para la alcalinidad `A` que produce esa bajada:
+
+```
+A - h = 10^(pH₂ - 6,35) · ( A / 10^(pH₁ - 6,35) + h )
+
+→  A ≈ 3,0 meq/L  ≈  150 mg/L CaCO₃
+```
+
+Y al revés, lo que cada hipótesis **habría predicho** para esa misma dosis:
+
+| TAC supuesto | Bajada de pH predicha | pH final |
+|---|---|---|
+| 240 (el del plan) | −0,33 | 7,41 |
+| **~150** | **−0,46** | **7,28** ✅ observado |
+| 40 (la tira) | −1,00 | 6,74 |
+
+**Con alcalinidad 40 el pH se habría hundido un punto entero.** No hay tampón que absorba un kilo de
+ácido en 40 m³. No pasó: se quedó en 7,28 y volvió a subir con una pendiente suave y constante toda
+la noche. Eso es agua tamponada.
+
+Los dos sesgos del método empujan en la misma dirección, así que **150 es techo, no suelo**:
+
+- el CO₂ se desgasifica durante los 51 min de medición → sube el pH → el descenso real fue mayor
+- si algo de producto quedó sin disolver, el ácido efectivo fue menor
+
+## Por qué la tira no vale — dos motivos independientes
+
+**1. El punto de toma.** La muestra se cogió **cerca de las impulsiones**. El plan lo prohíbe
+explícitamente (centro de la piscina, un palmo de profundidad) y no por capricho: el clorador inyecta
+en la línea de retorno, así que el agua que sale por la boquilla no es el agua de la piscina — es la
+que acaba de pasar por la célula y por el punto de inyección de ácido. Sesga a la baja.
+
+**2. La tira se contradice a sí misma sobre agua que no se movió.** Dos lecturas el mismo día:
+
+```
+~09:00   tira:  pH 7,2 - 7,8
+~11:00   tira:  pH 7,2 - 7,6
+         sonda: pH 7,72 - 7,74 durante toda la mañana, sin moverse
+```
+
+**7,74 está fuera de la banda 7,2-7,6.** La sonda no cambió, la tira sí, y la segunda lectura excluye
+el valor verdadero. La reproducibilidad de la tira es de ±0,2-0,3 en el mejor caso.
+
+> Y el argumento que cierra el asunto: **si el pad de pH falla de forma demostrable, no hay ninguna
+> razón para creerle al pad de alcalinidad**, que es el menos fiable de todos los de una tira.
+
+La sonda, en cambio, tiene validación independiente: está calibrada **y** su respuesta a una dosis
+conocida de ácido cuadra con el modelo del carbonato. Es el único instrumento de los tres con una
+comprobación externa.
+
+## Consecuencia: plan suspendido
+
+| | |
+|---|---|
+| TAC de partida real | **~150**, no 240 |
+| Objetivo | 120 |
+| Producto necesario | **~7,5 L**, no 30 L |
+| Si se ejecuta el plan como está | TAC final ≈ **30** → agua agresiva |
+
+Un agua en TAC 30 ataca juntas, gresite y el recubrimiento de los electrodos de la célula. Habríamos
+convertido el problema en otro peor y más caro.
+
+El plan lleva ahora un banner **PLAN SUSPENDIDO — NO EJECUTAR** en su cabecera.
+
+> **El fallo de método:** el 240 salió de una medición del 11-08 cuyo instrumento nunca quedó
+> registrado, y jamás se verificó con un segundo método. Un número que sostiene un plan de 30 L y
+> seis días tenía que haberse confirmado **antes** de escribir la primera línea del plan.
+
+**Pendiente:** medir la alcalinidad por **titulación de gotas** (o análisis en tienda), con la muestra
+del centro de la piscina. No comprar producto ni dosificar nada hasta tener ese número.
+
+## Artefacto de lectura: la primera muestra tras cada arranque miente
+
+Confirmado en **los cinco arranques registrados**. Tras cada corte de corriente, el primer sondeo
+devuelve una caché rancia, y siempre **lee alto**:
+
+| Arranque | 1ª muestra | 2ª muestra |
+|---|---|---|
+| 15/22:03 | 7,69 | 7,41 |
+| 16/00:49 | 7,66 | 7,55 |
+| 16/03:49 | 7,77 | 7,68 |
+| 16/06:48 | 7,80 | 7,74 |
+| 16/09:47 | 7,82 | 7,74 |
+
+Vale igual para las otras magnitudes — en el arranque de las 09:47: ORP 695 → 686, temperatura
+28,0 → 27,5 °C. Y el mismo fantasma aparece en la cloración: un `0.0` suelto el día 15 a las
+15:42:20, en mitad de una parada.
+
+> **Regla: descartar siempre la primera muestra posterior a un arranque y leer desde la segunda.**
+
+## Atributos de la integración que no son de fiar
+
+```
+number.piscina_chlorinator_consigna_ph
+  ph_range:           "6.8-7.6"   ← falso: el equipo aceptó 7,8 sin problema
+  friendly_name:      "PH 7.6"    ← congelado en la consigna de anteayer
+  current_ph_reading:  7.8        ← este sí se refresca
+```
+
+Se frenó una escritura de 7,8 por culpa del `ph_range`, y el rango era mentira. **Para leer la
+consigna, `current_ph_reading`. El nombre y el rango son restos.**
+
+## El experimento que no discriminaba
+
+Se propuso usar la ventana de parada del reloj para separar las dos causas de la subida del pH:
+si sube con la célula sin corriente, es desgasificación de CO₂; si no, es la célula.
+
+```
+08:52  pH 7,74   →   09:48  pH 7,74      plano en 55 min
+```
+
+**El resultado no vale, porque el test estaba mal diseñado.** La parada quita **dos** variables con un
+solo interruptor: para la célula *y* para la circulación, que es lo que agita la superficie y permite
+que el CO₂ escape. Las dos hipótesis predicen exactamente lo mismo con la bomba parada.
+
+Peor: **sin ninguna entrada de ácido ni de base, cualquier agua mantiene su pH, tenga el tampón que
+tenga.** Sobre la alcalinidad, el dato aporta cero.
+
+Lo único que sí demuestra: no hay ningún tercer proceso moviendo el pH con el grupo parado. Todo lo
+que le pasa a esta piscina pasa en las ventanas ON.
+
+> **Lección de método:** un test que da el mismo resultado tanto si la hipótesis es cierta como si es
+> falsa no es un test. Antes de leer el resultado, escribir qué se vería en cada caso — si las dos
+> columnas salen iguales, el experimento está mal antes de empezar.
+
+## El test bien hecho: célula al 0 %
+
+Un interruptor, una variable. Siguen la circulación y la aireación; solo deja de producir la célula.
+
+```
+10:14:58   nivel_de_cloro   60 %  →  0 %        ← t0
+10:17:03   consigna_ph      7,7   →  7,8        ← saca del test a la bomba de ácido:
+                                                   con el pH en 7,74 y consigna 7,8, no dosifica
+partida:   pH 7,74   ·   ORP 698
+```
+
+**Control de validez — el que faltaba en el intento anterior: el ORP tiene que bajar.** Si la
+cloración se queda de verdad en 0, el redox cae ~18 mV/h. Si el ORP no se mueve, el comando no llegó
+al equipo y un pH plano no probaría nada.
+
+**Aborto** si el ORP baja de 655 (el suelo operativo son 650).
+
+Resolución mínima para poder concluir algo:
+
+```
+subida esperada  0,023 - 0,046 pH/h        resolución del sensor: 0,01
+24 min  →  0,009    por debajo de la resolución: no concluir nada
+46 min  →  0,018 - 0,035    ya se distingue
+90 min  →  0,035 - 0,069    inequívoco
+```
+
+**Restaurar al terminar: cloración 60 %, consigna 7,70.**
+
+### Resultado
+
+```
+10:14:58   pH 7,74   ORP 698     ← t0, célula a 0 %
+11:02      pH 7,74   ORP 698     ← 47 min: PLANO
+11:12:55   pH 7,77   ORP 698     ← 58 min: +0,03
+11:44:29   pH 7,77   ORP 698     ← 89 min, fin del test
+
+subida con la célula apagada:  +0,03 en 89 min  =  0,020 pH/h
+```
+
+Contraste con las subidas medidas **con la célula al 60 %**:
+
+| Momento | Célula | Subida | Contexto |
+|---|---|---|---|
+| 15/tarde | 60 % | 0,023 pH/h | sin ácido reciente |
+| 15/noche | 60 % | 0,046 pH/h | **horas después de echar 1 kg de ácido** |
+| 16/mañana | **0 %** | **0,020 pH/h** | sin ácido reciente |
+
+**La célula no es el motor de la subida del pH. Es el agua.** Con la producción apagada el pH sube
+prácticamente igual que con ella al 60 %.
+
+Y la coherencia interna refuerza el mecanismo: la subida más rápida de las tres (0,046) es justo la de
+las horas siguientes a la dosis de ácido, que es cuando la sobresaturación de CO₂ es máxima. **El
+ritmo correlaciona con el ácido reciente, no con la célula.**
+
+> **Consecuencia operativa: bajar el porcentaje de cloración NO arregla el pH.** Queda descartada la
+> táctica escrita el día 15 de producir menos para que el ácido no pelee con la célula. La palanca es
+> la alcalinidad, y solo la alcalinidad.
+
+### La trampa de leer antes de tiempo
+
+```
+a los 47 min   pH plano        →  conclusión: "el motor es la célula"
+a los 89 min   pH +0,03        →  conclusión: "el motor es el agua"
+```
+
+**Conclusiones opuestas según cuándo se mire.** El cálculo de resolución fijado *antes* de empezar
+decía que a 47 minutos la señal esperada (0,018-0,035) apenas superaba la resolución del sensor
+(0,01), y que la lectura inequívoca era la de 90 minutos. Cerrar en el checkpoint habría dado la
+respuesta contraria con toda la apariencia de un resultado limpio.
+
+### El control de validez nunca confirmó
+
+El ORP no cayó en los 89 minutos (698 → 698).
+
+- **A favor** de que la célula sí paró: venía subiendo +13 mV en los 29 min previos (686 → 699 entre
+  las 09:48 y las 10:17) y **se cortó en seco exactamente en t0**.
+- **En contra:** nunca llegó a bajar.
+- **Atenuante:** la expectativa de −18 mV/h estaba mal fundada — salía de la parada del día 15
+  (680 → 644), y ese 644 es uno de los sondeos post-arranque que este mismo episodio demuestra que no
+  son fiables. Se construyó la expectativa sobre un dato ya sabido malo.
+
+**Veredicto: fuertemente sugerente, no probado.**
+
+## El reloj: la duda del disco desfasado, resuelta
+
+El día 15 se cambió el reloj a 2 h ON / 1 h OFF y quedó la duda de si el disco estaba bien puesto.
+No hace falta cronometrar nada: **cada arranque y cada parada quedan grabados**, y con la noche
+entera registrada el horario real sale solo.
+
+```
+ON  22:04-23:56 | 00:49-02:42 | 03:48-05:40 | 06:48-08:55 | 09:47-11:54
+
+ciclo ~3 h  ·  ~1 h 53 en marcha  ·  duty 63 %  →  15,1 h/día
+```
+
+**El cambio funcionó**: se pasó de 12 h/día a 15,1. Objetivo cumplido.
+
+**Pero el disco va ~12 minutos adelantado** respecto a la hora real. Los bloques arrancan a las
+00:49, 03:48, 06:48 y 09:47 en vez de en punto, y el desfase es consistente en los cuatro:
+
+| Nominal | Real | Desfase |
+|---|---|---|
+| 01:00 | 00:49 | −11 min |
+| 04:00 | 03:48 | −12 min |
+| 07:00 | 06:48 | −12 min |
+| 10:00 | 09:47 | −13 min |
+
+No es grave, pero importa para programar las tomas del tratamiento: cada dosis quiere **1 h de
+filtración posterior**, y con el disco adelantado esa hora empieza y acaba antes de lo que marca el
+reloj de pared.
+
+> Las paradas son menos limpias (±8 min) porque la transición a `unknown` se detecta en el sondeo
+> siguiente, no en el instante del corte. Los **arranques** sí son inmediatos, y por eso son los que
+> valen para medir el desfase.
+
+## Pendiente
+
+- [ ] **Alcalinidad por titulación de gotas**, muestra del centro de la piscina. Bloquea todo lo demás.
+- [ ] Recalcular las secciones 2 y 5 del plan con el número real, y levantar la suspensión.
+- [ ] Resultado del test de la célula al 0 %.
+- [ ] Caudal nominal de la bomba peristáltica (placa del equipo), para saber cuánto TAC baja el
+      equipo por su cuenta en cada ciclo de dosificación.
+- [ ] Alarma `HIGH SALT` del 15-08 a las 23:13 (1 min, salinidad 5,36-5,43). Vigilar: el tratamiento
+      con ácido sulfúrico y bisulfato sube la conductividad que lee esa sonda.
