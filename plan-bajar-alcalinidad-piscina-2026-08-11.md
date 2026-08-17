@@ -6,39 +6,55 @@
 
 ---
 
-> # ⚠️ PLAN SUSPENDIDO — NO EJECUTAR
+> # 🛑 PLAN CANCELADO — OBJETIVO YA CUMPLIDO — NO EJECUTAR NUNCA
 >
-> **2026-08-16.** El TAC de 240 sobre el que se calculó todo este plan **no está confirmado** y
-> probablemente es falso. Es una medición del 11-08 cuyo método no quedó registrado, y nunca se
-> verificó con un segundo instrumento.
+> **2026-08-17.** Este plan no está suspendido: está **cancelado**. La alcalinidad se midió por
+> titulación limpia y **ya estaba dentro del objetivo**. No hay nada que bajar.
 >
-> La dosis manual del 15-08 fue, sin pretenderlo, una titulación ácido-base real: 1 kg de bisulfato
-> sódico = 0,208 meq/L de ácido, y el pH respondió 7,74 → 7,28. Resolviendo el equilibrio del
-> carbonato, esa respuesta corresponde a una alcalinidad de **~150 mg/L**, no 240.
+> **TAC real medido = 85–110 mg/L.** Objetivo del plan: 120. Superado por abajo.
 >
-> | TAC supuesto | Bajada de pH que predice | Observada |
+> El **TAC de 240 sobre el que está calculado todo este documento es falso** y queda descartado:
+> era una medición del 11-08 cuyo instrumento nunca se registró, y contradice el balance de ácido
+> (para pasar de 240 a 100 harían falta ~14 kg de bisulfato o ~35 L de producto que nadie vertió).
+>
+> ## ⚠️ POR QUÉ EJECUTARLO SERÍA UNA CATÁSTROFE, Y NO UNA EXAGERACIÓN
+>
+> Concurren **dos errores que se multiplican**:
+>
+> 1. **El TAC de partida es menos de la mitad** del supuesto (≈100 frente a 240).
+> 2. **El producto que hay ahora en casa es 3,1 veces más concentrado.** Este plan está calculado
+>    sobre AstralPool pH Minus al **14,4 %**. Desde el 17-08 el equipo aspira de una garrafa de
+>    **Reductor pH- líquido MG, ácido sulfúrico al 38 %**.
+>
+> | Producto | Concentración | Puntos de TAC por litro |
 > |---|---|---|
-> | 240 | −0,31 | |
-> | **~150** | **−0,46** | **−0,46** |
-> | 40 (tira reactiva del 16-08) | −1,00 | |
+> | AstralPool pH Minus (el del cálculo) | 14,4 % | **4,0** |
+> | Reductor pH- líquido MG (el que hay hoy) | 38 % | **12,5** |
 >
-> Los dos sesgos del cálculo —desgasificación de CO₂ durante la medición y producto sin disolver—
-> empujan a la baja: **150 es el techo, no el suelo.**
+> Verter los **30 L** de la sección 2 con el producto actual daría **375 puntos** de reducción sobre
+> un agua que tiene ~100. Resultado: **alcalinidad cero, pH desplomado**, y destrucción de juntas,
+> gresite, silicona y del recubrimiento de los electrodos de la célula.
 >
-> **El riesgo de ejecutar este plan como está:** los 30 L calculados para bajar 240 → 120 dejarían
-> un agua de partida real de ~150 en **TAC ~30**. Agua agresiva, que ataca juntas, gresite y el
-> recubrimiento de los electrodos de la célula. Sobre 150, el objetivo de 120 solo pide **~7,5 L**.
+> ## SI ALGÚN DÍA HAY QUE VOLVER A BAJAR EL TAC
 >
-> **Antes de reanudar:** medir la alcalinidad por titulación de gotas (o análisis en tienda) y
-> recalcular las cantidades de las secciones 2 y 5. No comprar producto hasta tener ese número.
+> No usar este documento. Recalcular desde cero con estas dos reglas:
+>
+> - **Escala del producto nuevo (38 %): 1 L = 12,5 puntos de TAC en 40 m³.**
+> - **Nunca bajar de 80 mg/L.** Por debajo el agua se vuelve agresiva.
+>
+> Y medir antes, con el método de la sección «Cómo medir el TAC sin reactivos» al final de
+> `NOTES-piscina-clorador.md` (Episodio 6): pesar el producto, dosificar con las dos bombas en
+> marcha y leer la **meseta de mezcla a los 15 minutos**, nunca el mínimo.
 
 ---
 
 ## 1. Situación de partida
 
+> 🛑 **CIFRAS INVALIDADAS.** Se conservan solo como registro histórico. Ver el banner de cabecera.
+
 | Parámetro | Medido | Objetivo |
 |---|---|---|
-| Alcalinidad (TAC) | **240 mg/L** | 120 mg/L (rango sano: 80–120) |
+| Alcalinidad (TAC) | ~~**240 mg/L**~~ → **FALSO. Real: 85–110** | 120 mg/L (rango sano: 80–120) |
 | pH | **8,28** | 7,2 – 7,6 |
 | Redox (ClmV) | 589 mV | 650 – 750 mV |
 | Alarma en panel | ⚠ pH + `high` | apagada |
@@ -57,17 +73,25 @@ Si se intenta corregir el pH sin bajar antes el TAC, en tres días se vuelve al 
 
 ## 2. Producto y dosis
 
+> 🛑 **DOSIS INVALIDADAS — NO EJECUTAR.** Calculadas sobre un TAC falso de 240 **y** sobre un
+> producto que ya no es el que hay en la instalación. Ver el banner de cabecera.
+
 **AstralPool pH MINUS** — líquido, garrafa de 20 L, ref. 73674
 Composición: **ácido sulfúrico 14,4 %** (CAS 7664-93-9)
 
-> **Regla de oro para esta piscina: 2,5 L de producto = 10 puntos de TAC menos.**
+> ⚠️ **Este NO es el producto conectado desde el 17-08.** Ahora hay **Reductor pH- líquido MG,
+> ácido sulfúrico al 38 %**, que rinde **12,5 puntos de TAC por litro** en vez de 4,0.
+> **Toda cifra en litros de esta sección hay que dividirla por 3,1 antes de siquiera pensarla.**
 
-| Concepto | Cantidad |
-|---|---|
-| Bajada total necesaria (240 → 120) | 120 puntos |
-| Producto total | **~30 L** |
-| A comprar | **2 garrafas de 20 L** |
-| Ritmo diario | **5 L/día** (= 20 puntos) |
+> ~~Regla de oro para esta piscina: 2,5 L de producto = 10 puntos de TAC menos.~~
+> **Regla vigente (producto al 38 %): 0,8 L = 10 puntos de TAC menos.**
+
+| Concepto | Cantidad ~~del plan~~ | Equivalente con el producto de hoy |
+|---|---|---|
+| Bajada total ~~(240 → 120)~~ | ~~120 puntos~~ **ninguna: ya está en objetivo** | — |
+| Producto total | ~~**~30 L**~~ | ~~9,7 L~~ **0 L** |
+| A comprar | ~~2 garrafas de 20 L~~ | **nada** |
+| Ritmo diario | ~~**5 L/día**~~ | ~~1,6 L/día~~ **no aplica** |
 | Cada toma | **1,7 L** × 3 tomas al día |
 
 > **Objetivo 120, no 100.** El agua de relleno viene con 240 de alcalinidad, así que apuntar a 100

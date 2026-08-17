@@ -81,6 +81,10 @@ y el redox sube solo.
 
 ## Causa raíz (química, otra vez)
 
+> 🛑 **ESTE NÚMERO ES FALSO.** Se conserva como registro de lo que se creyó entonces. El 17-08 la
+> alcalinidad se midió por titulación limpia: **85–110 mg/L**, y siempre estuvo cerca de 150, nunca
+> en 240. Toda dosis calculada en esta sección está invalidada. Ver **Episodio 6**.
+
 **Alcalinidad total (TAC) = 240 mg/L.** Rango sano: 80–120.
 
 El TAC es el tampón del agua: cuanto más alto, más se resiste el pH a moverse. La bomba dosificaba
@@ -755,6 +759,10 @@ comprobación externa.
 
 ## Consecuencia: plan suspendido
 
+> 🛑 **ACTUALIZADO EL 17-08.** El plan ya no está suspendido: está **CANCELADO**. Y de los tres
+> números de esta sección, **el único que sobrevivió fue el ~150** — la titulación del día 15 era
+> buena. Ver **Episodio 6**.
+
 | | |
 |---|---|
 | TAC de partida real | **~150**, no 240 |
@@ -764,8 +772,6 @@ comprobación externa.
 
 Un agua en TAC 30 ataca juntas, gresite y el recubrimiento de los electrodos de la célula. Habríamos
 convertido el problema en otro peor y más caro.
-
-El plan lleva ahora un banner **PLAN SUSPENDIDO — NO EJECUTAR** en su cabecera.
 
 > **El fallo de método:** el 240 salió de una medición del 11-08 cuyo instrumento nunca quedó
 > registrado, y jamás se verificó con un segundo método. Un número que sostiene un plan de 30 L y
@@ -945,10 +951,165 @@ reloj de pared.
 
 ## Pendiente
 
-- [ ] **Alcalinidad por titulación de gotas**, muestra del centro de la piscina. Bloquea todo lo demás.
-- [ ] Recalcular las secciones 2 y 5 del plan con el número real, y levantar la suspensión.
-- [ ] Resultado del test de la célula al 0 %.
-- [ ] Caudal nominal de la bomba peristáltica (placa del equipo), para saber cuánto TAC baja el
-      equipo por su cuenta en cada ciclo de dosificación.
-- [ ] Alarma `HIGH SALT` del 15-08 a las 23:13 (1 min, salinidad 5,36-5,43). Vigilar: el tratamiento
-      con ácido sulfúrico y bisulfato sube la conductividad que lee esa sonda.
+- [x] **Alcalinidad**, resuelta el 17-08 por titulación limpia: **85–110 mg/L**. Ver Episodio 6.
+- [x] Recalcular las secciones 2 y 5 del plan — hecho: el plan queda **CANCELADO**, no reanudado.
+- [x] Resultado del test de la célula al 0 %.
+- [ ] Caudal **real** de la bomba peristáltica. No la placa: medirlo con recipiente graduado y modo
+      cebado, 60 s cronometrados. El tubo de silicona se cansa y entrega menos que el nominal.
+- [ ] Alarma `HIGH SALT` del 15-08 a las 23:13 (1 min, salinidad 5,36-5,43). Probablemente **falsa**:
+      ver Episodio 6, el clorador lee la sal ~1 g/L por encima de un medidor de mano contrastado.
+
+---
+
+# Episodio 6 — 2026-08-17: la alcalinidad estaba bien desde el principio
+
+El día más largo del proyecto, y el que más conclusiones propias tumba. Termina con el problema
+central **cerrado** y con un desastre esquivado por leer una etiqueta.
+
+## Resultado: TAC = 85–110 mg/L
+
+La primera titulación del proyecto hecha en condiciones válidas: **célula recién limpia**, **las dos
+bombas en marcha** (mezcla rápida), concentración de producto conocida, hora anotada al minuto y
+sonda contrastada contra un segundo instrumento.
+
+```
+15:20:58   pH 7,74   basal
+15:35      vertido de 2,0-2,5 L de minorador al 14,4 %, diluido, paseando por el borde
+15:39:12   pH 6,95   MÍNIMO
+15:48:52   pH 7,21   MESETA DE MEZCLA
+17:04:21   pH 7,28   ya contaminado por desgasificación
+```
+
+Resolviendo el equilibrio del carbonato (pK₁ = 6,35) para la bajada 7,74 → 7,21:
+
+| Volumen vertido | TAC antes | **TAC actual** |
+|---|---|---|
+| si 2,5 L | 118 | **108** |
+| si 2,0 L | 94 | **86** |
+
+**Corroborado por un método independiente**: tira reactiva AstralPool 7-en-1, bien tomada, leída por
+el usuario sobre la tira física: **TA 80-120**. Química y física de acuerdo.
+
+**El objetivo del plan eran 120. El agua ya estaba por debajo.** El plan se cancela: no hay nada
+que bajar. Y el riesgo cambia de lado — si el valor real es 86, está rozando el mínimo sano de 80.
+
+## El hallazgo de método: el mínimo NO es la respuesta
+
+Ese `6,95` de las 15:39 no es la alcalinidad. Es **la nube de ácido concentrado pasando por delante
+de la sonda** cuatro minutos después de verter. Si fuera equilibrio, no rebotaría — y rebotó a 7,21
+en nueve minutos.
+
+Esto es exactamente el artefacto que el 16-08 se **dedujo** como causa del error del día 15. Hoy
+queda **grabado en directo**, y con un dato que cambia la conclusión anterior:
+
+> **El artefacto se resuelve en ~13 minutos, no en horas.**
+
+Lo cual invalida el razonamiento del Episodio 5 que decía que el 150 estaba subestimado porque
+51 min era «un cuarto de renovación». A los 51 minutos el agua ya estaba equilibrada. **Aquel 150
+era correcto**, y encaja con la cronología: ~155 el 11-08, 150 el 15-08, ~120 hoy antes de dosificar.
+
+> **Regla: en una titulación de piscina se lee la MESETA DE MEZCLA, nunca el mínimo, y nunca horas
+> después** — la desgasificación de CO₂ (medida hoy: 0,055 pH/h) infla el resultado, porque sube el
+> pH **sin cambiar la alcalinidad**.
+
+## Casi desastre: el ácido nuevo es 3,1 veces más fuerte
+
+Se sustituyó la garrafa por **Reductor pH- líquido MG, ácido sulfúrico al 38 %** (UN2796). Todo el
+plan estaba calculado sobre **AstralPool pH Minus al 14,4 %**.
+
+| Producto | Concentración | Densidad | Puntos de TAC por litro |
+|---|---|---|---|
+| AstralPool pH Minus | 14,4 % | ~1,10 | **4,0** |
+| Reductor pH- líquido MG | 38 % | ~1,29 | **12,5** |
+
+Verter los 30 L del plan con el producto nuevo habría dado **375 puntos** de reducción sobre un agua
+con ~100: alcalinidad cero y pH desplomado.
+
+El consejo de la tienda —«en salinas va reductor, no minorador»— **no se sostiene**: son el mismo
+compuesto, ácido sulfúrico. Lo único que cambia es la concentración.
+
+> **Pendiente de verificar en el manual: la concentración máxima que admite la peristáltica**, que
+> ahora aspira 38 % cuando venía trabajando con 14,4 %.
+
+## La célula estaba muy incrustada — y la culpa no era del ácido
+
+Dos baños de NETCEL (HCl 3,45 %), ninguno de 10 minutos, siguiendo **la regla del burbujeo en vez
+del reloj**. Quedó impecable y montó sin fugas.
+
+La hipótesis del usuario era que el ácido vertido estos días había acelerado la incrustación. **Es
+al revés**, y lo demuestra su propia observación: la cal **burbujeaba** con el limpiador, luego es
+carbonato — y el ácido *disuelve* carbonato.
+
+**La cal se formó en los huecos SIN ácido**: el 11-13/08 con la bomba bloqueada y el pH en 8,87, y
+la noche del 16 al 17 con `PUMPSTOP` enclavado ocho horas y el pH subiendo a 7,99.
+
+Se descarta el plan de limpiar cada dos semanas: **cada baño de ácido se lleva parte del
+recubrimiento de óxidos de Ru/Ir**, que es lo que produce el cloro y lo caro de la pieza. Una o dos
+veces por temporada.
+
+## `PUMPSTOP`: modelo cerrado
+
+> **Se suelta solo cuando el pH vuelve por debajo de la consigna. Queda enclavado mientras siga por
+> encima.**
+
+Confirmado tres veces el mismo día, la última a las **15:36:55**, justo al cruzar el pH por debajo
+de 7,70. Las ocho horas de la noche anterior no fueron avería: la condición nunca se resolvió.
+
+## Cómo medir el TAC sin reactivos y sin tiendas
+
+El kit de gotas del usuario solo hace cloro y pH. No hace falta comprar nada: **cada dosis futura es
+una medición gratis**, siempre que se haga así.
+
+1. **PESAR el producto.** 14,4 % = 1,10 kg/L · 38 % = 1,29 kg/L. Una báscula de cocina es más precisa
+   que una jarra. La duda entre 2 y 2,5 L fue **lo único** que dejó el resultado de hoy en banda.
+2. Dosificar **con las dos bombas en marcha**, diluido, paseando por el borde. Nunca con el grupo
+   parado: el ácido es más denso, se estratifica y ataca el fondo.
+3. **Anotar la hora exacta.**
+4. Leer la **meseta a los 15 minutos**. Ni el mínimo, ni horas después.
+5. Resolver `pH = 6,35 + log((A−c)/(A/10^(pH₀−6,35) + c))` para `A`.
+
+## Correcciones a episodios anteriores
+
+| Afirmación | Estado |
+|---|---|
+| TAC 240 (11-08) | **DESCARTADO.** Instrumento nunca registrado; contradice el balance de ácido |
+| TAC 150 (titulación 15-08) | **RESTITUIDO.** Era correcto; el Episodio 5 lo demoté sin razón |
+| TAC 40 (tira 16-08) | **DESCARTADO.** Punto de toma en las impulsiones |
+| «El equipo no rearma solo el `PUMPSTOP`» | **FALSO.** Rearma, bajo condición de pH |
+| «El disco del reloj gana 23 min/día» | **FALSO.** Lo movió el usuario a mano el 16-08 |
+| «La alcalinidad alta es la causa de todo» | **MATIZADO.** Con TAC ~100 no hay tamponamiento extremo |
+
+## Hallazgos sueltos
+
+- **Ácido cianúrico = 0.** Sin estabilizador el sol destruye el cloro libre en horas; explica que la
+  célula trabaje al 60 %. **No tocar todavía** — una variable cada vez, y el cianúrico solo se va
+  por dilución, así que pasarse no tiene marcha atrás.
+- **Dureza ~300+.** Con eso, el TAC y 28 °C, agua incrustante. Explica la célula.
+- **Hay DOS bombas de filtración.** La segunda sirve para mezclar rápido al dosificar y para titular
+  limpio. Dato que no estaba registrado en ninguna parte.
+- **Bomba de filtración: Hayward, P₂ 0,61 kW, 230 V, 2830 rpm, 3,78 A.** → 12-14 m³/h → renovación
+  de los 40 m³ en **~3 h** → **4,6 renovaciones/día** con las 15,1 h actuales. **El horario está bien.**
+- **La sonda de pH está sana**: 7,74 contra 7,7 de un medidor de mano IUZMAR. Primera vez en el
+  proyecto que dos instrumentos coinciden en un parámetro.
+- **La sal del clorador lee ~1 g/L alto.** Clorador 5,3 vs IUZMAR 4,3. El árbitro es la conductividad
+  bruta del medidor de mano: **8500 µS ≈ 4,5 g/L** (para 7,6 g/L harían falta 13.600 µS). La alarma
+  `HIGH SALT` del 15-08 es, casi seguro, falsa. **No añadir sal.**
+- **La consigna se queda en 7,70.** Bajarla a 7,2-7,4 como decía el plan aumentaría la sobresaturación
+  de CO₂, la desgasificación y con ello el ácido que la bomba tiene que echar cada día. Con el TAC
+  cerca del suelo, **la consigna alta protege**.
+
+## Lección de método de la semana
+
+Lo que ha decidido cada resultado de estos siete días **no ha sido la química**. Ha sido el **punto
+de toma**, el **instrumento** y el **tiempo transcurrido**. Tres retractaciones, todas por no haber
+registrado esas tres cosas.
+
+Reglas que quedan escritas:
+
+- **Descartar siempre la primera lectura de cualquier instrumento** de esta instalación.
+- **Una tira solo vale si algo que no es una tira la confirma.**
+- **En una titulación se lee la meseta de mezcla, nunca el mínimo.**
+- **Una tira se fotografía pegada al bote y a la sombra.** Con luz cálida el balance de blancos
+  convierte el verde-azulado en oliva, y ahí está justo la diferencia entre 180 y 40.
+- **Antes de dosificar, leer la etiqueta del envase que hay hoy**, no la del que había cuando se
+  escribió el plan.
