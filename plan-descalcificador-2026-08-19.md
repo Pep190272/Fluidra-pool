@@ -27,6 +27,32 @@ necesitar **dos o tres regeneraciones** para volver del todo.
 - [ ] Lanzar una **segunda regeneración** completa.
 - [ ] Esperar a que termine (un ciclo típico son **90-120 minutos**).
 
+### Lo que SÍ hay que mirar, ahora que el bypass está descartado
+
+El usuario confirma el 18-08: **el bypass está bien y la máquina funcionaba.** El equipo está en el
+parking, **con obras y acceso difícil**, y llevaba **mucho tiempo sin sal**. Se llenó con **un saco y
+medio de perlas** (~37 kg) y se lanzó un ciclo.
+
+Con ese cuadro, los dos fallos que quedan vivos son estos, y los dos se comprueban en el mismo viaje:
+
+- [ ] **¿Hay AGUA en el depósito de salmuera?** Sin agua las perlas no se disuelven y no hay salmuera
+      que aspirar, por muy lleno que se vea. Debe haber unos centímetros de agua por debajo de la sal.
+- [ ] **¿Se ha formado un PUENTE DE SAL?** Es el fallo clásico al rellenar de golpe un depósito que
+      llevaba mucho vacío, y más en un sitio húmedo. Se forma una costra dura que sostiene la sal
+      **por encima del agua**: el depósito parece lleno, el agua de abajo no toca ni un grano y la
+      regeneración aspira agua limpia. Se comprueba metiendo el palo de una escoba hasta el fondo:
+      si topa con una repisa dura que luego cede con un crujido, era un puente. Romperlo y ya está.
+
+**Con 37 kg dentro no hay que volver a por sal en meses.** Un ciclo gasta del orden de 1,5-3 kg, así
+que da para unas 15-20 regeneraciones. El acceso difícil deja de ser un problema recurrente.
+
+### Y no planificar más viajes de los necesarios
+
+La mayoría de los equipos domésticos regeneran **solos**, por volumen consumido o por calendario. Una
+vez dado el empujón manual de mañana, **el uso normal de la casa irá disparando ciclos sucesivos sin
+que haya que bajar al parking**. Si mañana el agua sale todavía dura, lo razonable **no es volver a
+bajar**: es dejar pasar unos días de uso normal y volver a medir en los grifos, que están arriba.
+
 ---
 
 ## Paso 1 — Purga: 20 litros, medidos en cubo
@@ -90,7 +116,12 @@ azul**. Son ~100 ΔE. No hace falta medir nada para saber si ha funcionado.
 |---|---|---|---|
 | Blando | **Blando** | **Premio.** El descalcificador va y el punto de relleno cuelga de él | Rellenar siempre por ahí |
 | Blando | Duro | El equipo va, pero el grifo de la piscina está aguas arriba | Decidir: repicar la tubería, o tirar manguera desde un grifo blando |
-| **Duro** | Duro | El equipo **sigue sin regenerar** tras dos ciclos | Ir al equipo: resina agotada de verdad, válvula atascada o **bypass abierto** |
+| **Duro** | Duro | El equipo **sigue sin regenerar** tras dos ciclos | **No bajar otra vez.** Dejar unos días de uso normal (el equipo regenera solo) y volver a medir arriba. Si sigue duro: puente de sal, falta de agua en la salmuera o resina agotada de verdad |
+
+**Dependencia que conviene tener clara:** las dos primeras filas **solo se pueden leer si el
+descalcificador está funcionando**. Si no ablanda, todos los grifos salen duros y **la pregunta de la
+fontanería se queda sin contestar** — no es un fallo aparte, es que el experimento necesita que el
+equipo funcione para poder distinguir un grifo de otro.
 
 ---
 
