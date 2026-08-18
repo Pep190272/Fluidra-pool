@@ -13,6 +13,18 @@
 >
 > **TAC real medido = 85–110 mg/L.** Objetivo del plan: 120. Superado por abajo.
 >
+> **CONFIRMACIÓN INDEPENDIENTE, 2026-08-18.** Tira reactiva leída por colorimetría (ΔE en espacio
+> Lab, patrón y parche en la misma foto): **TA = 120, con ΔE 8**, el mejor emparejamiento de su
+> tanda. Dos métodos independientes coinciden ahora en la banda **85-120**. Y una tercera vía lo
+> respalda: la noche del 17→18 el lazo de pH alcanzó consigna y la sostuvo plana tres horas **sin un
+> solo `PUMPSTOP`**, que es lo que hace una bomba sana contra un tampón normal, no contra uno de 240.
+>
+> Se descarta además el **TA = 40** que dio la tira de la mañana del 18-08: tenía ΔE mediocre
+> (10-16) y quedó con dos medidas en contra. Detalle en `NOTES-piscina-clorador.md`.
+>
+> **Y la vía contraria también está cerrada:** no se echa bicarbonato para subirlo, porque con 120
+> ya está en la parte alta de la banda. Ni subir ni bajar. **No se toca.**
+>
 > El **TAC de 240 sobre el que está calculado todo este documento es falso** y queda descartado:
 > era una medición del 11-08 cuyo instrumento nunca se registró, y contradice el balance de ácido
 > (para pasar de 240 a 100 harían falta ~14 kg de bisulfato o ~35 L de producto que nadie vertió).

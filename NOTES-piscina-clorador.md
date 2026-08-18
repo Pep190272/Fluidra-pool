@@ -1085,6 +1085,21 @@ una medición gratis**, siempre que se haga así.
   célula trabaje al 60 %. **No tocar todavía** — una variable cada vez, y el cianúrico solo se va
   por dilución, así que pasarse no tiene marcha atrás.
 - **Dureza ~300+.** Con eso, el TAC y 28 °C, agua incrustante. Explica la célula.
+- **Lámina de agua: 7,5 × 3,5 m = 26,25 m².** Dato nuevo del 18-08. Cuadra con los 40 m³:
+  profundidad media **1,52 m**. De aquí sale la conversión que faltaba: **1 cm de nivel = 262 L**,
+  y un cuadro de gresite de 2,5 cm = **656 L = 1,64 % del vaso**.
+- **EL RELLENO ES LA FUENTE DE LA CAL, y es un trinquete de un solo sentido.** Solo se evapora agua
+  pura: todo el calcio y toda la alcalinidad que entran con el relleno **se quedan dentro**. A los
+  5-8 mm/día típicos de agosto son 130-210 L/día, o sea un cuadro de gresite cada 3-5 días, y
+  **16-25 m³ en una temporada — entre el 40 % y el 63 % del vaso**. Con un agua de red de dureza
+  300, eso son **4,8-7,6 kg de CaCO₃ metidos al año**. La alcalinidad tiene quien se la coma (la
+  bomba de ácido); **la dureza no tiene NINGUNA vía de salida salvo vaciar**. Por eso sube sola
+  hasta 300+ y por eso se incrusta la célula.
+- **Subir el TAC rellenando con agua de red NO SALE.** `ganancia = fracción × (TA_red − TA_piscina)`.
+  Un cuadro de gresite con un agua de red generosa (TA 250) sobre una piscina a 40: `0,0164 × 210 =
+  3,4 mg/L`. Para ir de 40 a 80 harían falta **7.620 L, casi 12 cuadros**. El bicarbonato equivalente
+  son **2,7 kg** (1,68 g por m³ y por mg/L) y **no mete ni un miligramo de calcio**. El relleno
+  ahorraría unos euros a cambio de más de lo único que ya rompió una pieza.
 - **Hay DOS bombas de filtración.** La segunda sirve para mezclar rápido al dosificar y para titular
   limpio. Dato que no estaba registrado en ninguna parte.
 - **Bomba de filtración: Hayward, P₂ 0,61 kW, 230 V, 2830 rpm, 3,78 A.** → 12-14 m³/h → renovación
@@ -1097,6 +1112,307 @@ una medición gratis**, siempre que se haga así.
 - **La consigna se queda en 7,70.** Bajarla a 7,2-7,4 como decía el plan aumentaría la sobresaturación
   de CO₂, la desgasificación y con ello el ácido que la bomba tiene que echar cada día. Con el TAC
   cerca del suelo, **la consigna alta protege**.
+
+## Lectura de la noche 17→18 de agosto: las dos predicciones, contestadas
+
+Ventana leída del recorder: **17-08 17:00 → 18-08 07:30**, célula recién limpia, sin intervención
+humana. Las dos predicciones estaban escritas **antes** del dato, y salen con signos opuestos.
+
+### Predicción 1 — la salinidad: **FALLA**
+
+Decía: si la cal engañaba al sensor, con la célula limpia la sal debería bajar a **4,3-4,7**.
+
+```
+Media de la noche (22:00-07:30, n=1007)   5,774 g/L
+Mediana                                   5,65
+Rango                                     5,48 - 6,55     (sd 0,238)
+Último valor (07:30)                      5,52
+Referencia con célula SUCIA               5,04 - 5,07
+```
+
+Con la célula limpia **la lectura SUBE**, no baja. La cal no era lo que inflaba el número: es un
+**offset de calibración del clorador**, de **+1,3 g/L** contra el IUZMAR (4,3) y contra el árbitro
+de conductividad (8500 µS ≈ 4,5 g/L). Queda confirmado que **no hay que añadir sal** y que la
+alarma `HIGH SALT` del 15-08 es del instrumento, no del agua.
+
+Hallazgo de método añadido: **el sensor de sal oscila ±0,5 g/L**. «El valor asentado» no existe en
+este aparato. Cualquier lectura suelta de salinidad es ruido; solo vale la **media de una ventana
+larga**.
+
+### Predicción 2 — el `PUMPSTOP`: **ACIERTA, y limpio**
+
+Decía: con el TAC en ~100 en vez de ~200, la bomba alcanzaría la consigna sin agotar su tiempo, así
+que habría **menos eventos, o ninguno**.
+
+**Ninguno. Cero alarmas en 14,5 horas.** `active_alarm_count` = 0 en las 989 muestras de la ventana.
+
+Y la regulación se ve entera en la traza de pH:
+
+```
+17/08 17:00   7,28   ← cierre de ayer, tras la titulación
+17/08 22:00   7,44   ← deriva natural al alza (desgasificación de CO2)
+18/08 02:00   7,63
+18/08 04:45   7,70   ← alcanza consigna
+18/08 07:23   7,68   ← ~3 h clavado en 7,68-7,72
+```
+
+La bomba sube hasta la consigna y **la sostiene plana tres horas**. Eso es una peristáltica sana
+regulando contra un tampón normal. Es la **tercera vía independiente** que confirma el TAC ~100:
+titulación, tira bien hecha, y ahora el comportamiento del lazo de control.
+
+Corolario: **ya no hay motivo para sospechar de la peristáltica**. El pendiente de medir su caudal
+real baja de prioridad — sigue estando bien hacerlo, pero ya no es diagnóstico de nada.
+
+### Lo demás de la ventana
+
+```
+ORP        700,8 de media (682-709), estable      cloración 60 %, consigna pH 7,70
+Temp       29,6 -> 28,1 ºC (enfriamiento nocturno normal)
+```
+
+- **El cloro libre NO SE MIDE, y no es un fallo: la máquina no puede.** Corrección de una nota
+  anterior de hoy que decía que «el sensor existe pero no da valor». No existe. Ya no está en
+  `core.entity_registry`, y en el recorder solo quedan **4 filas muertas** (12-08 a 15-08, todas
+  `unavailable`). Era un fantasma del catch-all genérico, que sí declara `c178`; al aterrizar el
+  perfil propio del equipo (Issue #82) la entidad desapareció. El perfil `lc24009904_chlorinator`
+  llama a `_standard_tecnolc2(["LC24009904.nn_*"], priority=87)` **sin el argumento
+  `free_chlorine=`**, así que `c178` ni siquiera se consulta. Y la ficha del equipo lo dice:
+  *KLINWASS (tecnoLC2 with pH + ORP probes)* — **dos sondas, no tres.**
+  **El ORP es la única medida de desinfección que da esta instalación.**
+- **Cinco cortes de conexión con la nube**, `device_offline=true`, de 55-70 min cada uno:
+  17:26, 20:27, 23:27, 02:13, 05:12. **Cadencia de ~3 h, demasiado regular para ser aleatoria** —
+  huele a horario de filtración (el clorador se queda sin corriente con la bomba), no a wifi.
+  No es una avería, pero conviene contrastarlo con el disco del reloj.
+
+## 18 de agosto, 08:05: la tira, leída con un colorímetro en vez de con el ojo
+
+Tres fotos del mismo test: **dos a los 20 s** y **una al minuto**, la tira sobre el bordillo y el bote
+al lado. En vez de comparar a ojo, se midieron los píxeles: se muestrea cada parche y **cada patrón
+de la carta del bote en la MISMA foto**, se normaliza cada uno con su blanco local (el papel de la
+tira, la etiqueta del bote) y se busca el patrón más cercano en **espacio Lab (ΔE)**.
+
+Esto elimina de raíz el problema que arruinó las lecturas del 15 y el 16: **el balance de blancos ya
+no importa**, porque tira y carta reciben la misma luz en la misma imagen.
+
+```
+            20 s (foto 1)     20 s (foto 2)      1 min (foto 3)
+  FC            2  ΔE 2           2  ΔE18            2  ΔE13
+  TC            5  ΔE 9           5  ΔE10           10  ΔE15
+  pH          6,8  ΔE 9         7,2  ΔE15          7,5  ΔE15
+  TA           40  ΔE11          40  ΔE16           40  ΔE10
+  TH          300  ΔE21         300  ΔE21          800  ΔE28
+  CYA           0  ΔE13       30-60  ΔE30*       30-60  ΔE 9
+```
+\* En la foto 2 el patrón «0» de CYA y TA queda cortado por el borde del bote: la elección es forzada,
+y su ΔE de 30 significa «ninguno de estos encaja», que es justo lo que se espera si el verdadero es
+el que falta.
+
+### El resultado bueno: **CLORO LIBRE = 2 ppm**, y es la mejor medida del proyecto
+
+**ΔE 2,3.** Por debajo de 3 la diferencia es imperceptible al ojo humano. El segundo candidato queda
+a ΔE 11, cinco veces más lejos. Y **sale 2 ppm en los tres fotogramas**. No hay ninguna otra medición
+en estas dos semanas con este respaldo.
+
+2 ppm cae **en el centro exacto de la banda IDEAL** de la tira (1-3). **La cloración NO está baja.**
+La queja del 09-08 que abrió todo esto queda cerrada: entonces sí lo estaba (ORP 565), hoy no.
+
+### Los tres instrumentos cuadran por primera vez
+
+```
+sonda de pH   7,70   (y el IUZMAR de mano dio 7,7 → la sonda está sana)
+tira          FC 2 ppm
+clorador      ORP 700-709 mV
+```
+A 28 °C el pKa del HOCl ronda **7,50**. A pH 7,70 la fracción activa es
+`1/(1+10^(7,70-7,50)) = 39 %` → **HOCl ≈ 0,77 ppm**. Sin estabilizador, eso corresponde a un ORP de
+**700-720 mV**. Se mide 700-709. **Cuadra.** Cloro correcto, pH correcto, ORP correcto: el sistema
+está sano y las tres medidas se sostienen entre sí.
+
+### Por qué NO vale la lectura del minuto, aunque el pH «encaje mejor»
+
+Hipótesis del usuario: al minuto los colores parecen más acordes con el clorador. En el pH **tiene
+razón en el dato**: 7,5 al minuto está más cerca del 7,70 de la sonda que el 6,8 de los 20 s.
+
+Pero la conclusión no se sostiene, y la prueba está en la propia foto. Entre los 20 s y el minuto se
+mueven **cuatro parches**, y **dos de ellos miden magnitudes que no pueden cambiar en 40 segundos**:
+
+- **Dureza: 300 → 800.** La dureza cálcica no se duplica en 40 segundos.
+- **Cianúrico: 0 → 30-60.** El estabilizador no aparece de la nada en 40 segundos.
+
+No hace falta saber cuál es el valor verdadero de ninguno de los dos: **basta con que no puedan
+cambiar.** Si cambian, lo que se está midiendo es el reloj, no el agua. El parche de pH no «acierta»
+al minuto: va subiendo y de paso cruza por la respuesta que esperábamos. Si se espera más, se pasa
+a 7,8 y luego a 8,4.
+
+**Regla nueva, y esta es dura:** *una lectura que depende de cuánto rato la mires no es una lectura.*
+Los 20 segundos del fabricante no son una recomendación, son el punto de calibración.
+
+### Lo que queda abierto
+
+- **TA = 40 en los TRES fotogramas**, contra los **85-110** de la titulación del 17-08. Es el único
+  conflicto que sobrevive al método nuevo, y ya no se puede achacar a la foto. Da igual para la
+  acción inmediata (**no se echa ácido en ninguno de los dos casos**), pero **no da igual para la
+  contraria**: si de verdad fuese 40 estaría por debajo del suelo sano de 80 y tocaría **subirlo con
+  bicarbonato**. → **Comprar el reactivo de gotas de TA.** Es lo único que cierra esto.
+- **TC = 5 con FC = 2** en los dos fotogramas de 20 s, es decir **~3 ppm de cloro combinado**
+  (cloraminas), muy por encima del 0,5 habitual. El ΔE del parche TC es flojo (9-10) frente al 2,3
+  del FC, así que **no se actúa: se repite el test** mirando solo ese parche.
+
+## 18 de agosto, tarde: tres tiras, y el descalcificador no descalcifica
+
+Tres tomas, una tira cada una: **piscina**, **grifo supuestamente descalcificado** y **agua sin
+descalcificar**. Mismo método colorimétrico. La carta de la foto de piscina salió desenfocada, así
+que se usó la de la foto del grifo como patrón para las tres, normalizando cada tira con su propio
+papel.
+
+**Aviso de calidad, por delante:** la luz de tarde es mucho peor para esto. Los ΔE de esta tanda
+salen entre 10 y 35, contra el 2-16 de la mañana. Y hay una prueba interna de que los **valores
+absolutos** llevan error: las dos tiras de grifo dan **CYA 30-60**, y en agua de red **no hay ácido
+cianúrico, es imposible**. Por eso lo que se firma aquí son las **diferencias**, no los absolutos:
+las tres tomas son de la misma sesión, con la misma luz y minutos aparte, y ahí la comparación sí
+aguanta.
+
+### 1. El agua de red ES más alcalina que la piscina. Confirmado
+
+```
+                        FC     TC     pH     TA     TH      CYA
+  piscina                2     10    7,2    120    300    30-60
+  grifo "descalcif."     0    0,5    7,8    180    300    30-60
+  grifo sin descalc.     0    0,5    7,5    180    800    30-60
+```
+
+Diferencia directa piscina ↔ grifo en el parche de TA: **ΔE 31,6**. Para calibrar cuánto es eso, un
+escalón entero de la carta en esa zona vale 18-25 ΔE (80→120 = 18,4; 120→180 = 24,8). O sea que el
+grifo está **más de un escalón completo por encima** de la piscina. La sospecha era correcta.
+
+### 2. Pero la piscina no necesita alcalinidad, así que da igual
+
+El parche de TA de la piscina da **120, y con ΔE 8: el mejor emparejamiento de toda la tanda de
+tarde.** Sumado a la titulación del 17-08 (85-110), son **dos métodos independientes en la banda
+85-120**.
+
+**El 40 de la mañana queda como el dato descolgado y se retira.** Tenía ΔE 10-16 (mediocre) y ahora
+tiene dos medidas en contra. 120 está en la parte alta de la banda ideal: **no hay nada que subir.**
+
+Con eso, la aritmética del relleno se hunde del todo:
+
+```
+ganancia por cuadro = 0,0164 × (180 − 120) ≈ 1 mg/L
+```
+
+**Un punto por cuadro de gresite.** Y aunque el grifo estuviese dos escalones por encima, serían 2.
+
+**Conclusión doble: ni bicarbonato ni relleno.** El bicarbonato ya no es que sea innecesario, es que
+metería el TAC por encima de la banda.
+
+### 3. EL HALLAZGO: el descalcificador no está haciendo nada
+
+Comparando las dos tiras de grifo entre sí, parche a parche:
+
+```
+  FC   ΔE  5,1     TC   ΔE  3,8
+  pH   ΔE  9,0  ←  canal nulo: un descalcificador NO cambia el pH
+  TA   ΔE  9,5  ←  canal nulo: NI la alcalinidad (intercambia Ca por Na, el bicarbonato se queda)
+  TH   ΔE 10,0  ←  AQUÍ tendría que estar toda la señal
+  CYA  ΔE 12,4
+```
+
+El pH y la alcalinidad **tienen que salir idénticos** entre agua blanda y dura: eso fija el suelo de
+ruido de esta comparación en **ΔE 9-10**. Y la dureza sale en **10,0**. Exactamente el ruido.
+
+Y ahora la magnitud que debería tener si funcionara. En la propia carta:
+
+```
+  TH  0 vs 300   ΔE = 103,1      ← lo que se esperaría de un descalcificador que descalcifica
+  TH  150 vs 300 ΔE =  21,5      ← lo que se esperaría de uno que va a medio gas
+  observado                10,0
+```
+
+**Se esperan 103 y se miden 10.** Ni siquiera llega a la mitad de lo que daría un descalcificador
+funcionando a medias. Las dos aguas son la misma agua.
+
+Remate: el parche de dureza de la **piscina** contra el del **grifo** da **ΔE 5,2** — la piscina está
+tan dura como el grifo del que se llena, que es justo lo que predice el trinquete del relleno.
+
+### CAUSA CONFIRMADA POR EL USUARIO: el descalcificador está sin sal
+
+Lo dice él al leer el resultado: el aparato está en el parking **y lleva sin sal**. Encaja exacto con
+la medida — sin sal no hay regeneración, la resina se satura y **el agua atraviesa el equipo sin que
+la toque nadie**. De ahí el ΔE 10 en lugar de 103. Diagnóstico cerrado por dos vías independientes.
+
+**PRECISIÓN IMPORTANTE, que corrige lo que dije antes de saberlo:** rellenar con agua descalcificada
+**NO baja la dureza, la CONGELA.** El balance:
+
+- Se evapora agua pura → el calcio se queda → la concentración SUBE.
+- Se rellena con agua dura → entra más calcio → sube otra vez. **Trinquete.**
+- Se rellena con agua blanda → el volumen se repone y la masa de calcio no cambia → **vuelve al punto
+  de partida y ahí se queda.**
+
+Para que la dureza BAJE hay que **sacar agua**, y eso solo pasa al **lavar el filtro** o al vaciar.
+Con la sal puesta, cada contralavado pasa a ser una retirada real de calcio: el agua que se va lleva
+sus 300 mg/L y la que entra a sustituirla no lleva ninguno. Lento y gratis.
+
+**Y tiene suelo: no perseguir el cero.** Una piscina quiere **200-400 mg/L** de dureza. Por debajo de
+~150 el agua se vuelve agresiva y empieza a comerse la lechada del gresite. Se pasa de incrustante a
+corrosiva, que es el otro lado del mismo precipicio.
+
+### Qué se hace con esto
+
+- **Nada de bicarbonato. Nada de rellenar para subir el TAC.** Las dos vías están cerradas, y por
+  motivos distintos: la primera porque no hace falta, la segunda porque no daría ni un punto.
+- **Mirar el descalcificador.** Sal en el depósito de salmuera, válvula de regeneración, y sobre
+  todo **si el bypass quedó abierto**. Es el único mando que actúa sobre la causa real de la cal.
+- Un descalcificador que funcionara daría agua de relleno **con la misma alcalinidad y sin calcio**.
+  No sirve para subir el TAC — la aritmética es la que es — pero **corta la entrada de cal de raíz**,
+  que es lo que se comió la célula.
+- **El reactivo de gotas de TA baja de prioridad.** Ya no hay conflicto que arbitrar: 85-110 y 120
+  cuentan lo mismo.
+
+## 18 de agosto, noche: sal echada, y la fontanería pasa a ser la incógnita
+
+Acciones del usuario tras el resultado: **llena el descalcificador de sal y lanza un reciclo.**
+
+**Ese primer ciclo no cuenta, y conviene que quede escrito por qué.** La salmuera necesita **4-6
+horas** para saturarse, mejor toda la noche. Un ciclo lanzado justo después de echar la sal **aspira
+agua, no salmuera**: la resina se regenera poco o nada. Medir ahora daría un resultado a medias y
+llevaría a la conclusión equivocada — que el aparato está roto — cuando lo único que pasó es que no
+se le dio tiempo. Y una resina saturada desde hace mucho puede necesitar **dos o tres ciclos**.
+
+### El mapa de la fontanería, tal y como se declara el 18-08
+
+| Punto | Estado declarado | Papel en la prueba de mañana |
+|---|---|---|
+| Jardín | **Va aparte** del descalcificador | Control negativo: debe salir duro |
+| Grifo cerca de la piscina | **Sospecha de que lo dejó pasar** por el equipo | **La incógnita que decide todo** |
+| Grifo interior lejano | Descalcificado | Control positivo: debe salir blando |
+
+**Y aquí está el riesgo que puede tumbar todo el arreglo:** los grifos de exterior se cuelgan **antes**
+del descalcificador a propósito, para no gastar sal en regar. Si el punto por el que se rellena la
+piscina está aguas arriba, **se puede dejar el equipo perfecto y a la piscina no le llega nada**.
+
+La buena noticia es que el propio test lo resuelve sin herramientas: tres tiras, tres grifos, una
+sola foto. Si el interior sale blando y el de la piscina sigue duro, el corte está localizado.
+
+### La purga: 20 litros, contados en cubo
+
+Tirada conocida: **25 m de PPR 22**. El PPR se designa por diámetro **exterior**, así que el interior
+ronda 15-16 mm.
+
+```
+25 m × ~15,5 mm interior   ≈  4,7 L   = un volumen de tubería
+3 volúmenes                ≈  15 L    ← uno no basta: el agua se mezcla, no empuja en bloque
+redondeo de trabajo           20 L
+```
+
+**Litros, no segundos.** El caudal de un grifo varía demasiado para fiarse del reloj. Es la misma
+disciplina que el resto del proyecto: medir el recipiente, no estimar.
+
+### La señal que hay que buscar mañana
+
+El parche de dureza pasando de **magenta a azul**. Son unos **100 ΔE**: no hace falta colorimetría
+ni ordenador, **se ve a simple vista**. Si no se ve a ojo, no ha pasado.
+
+**Protocolo completo de mañana en `plan-descalcificador-2026-08-19.md`.**
 
 ## Lección de método de la semana
 
