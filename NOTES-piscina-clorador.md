@@ -1112,6 +1112,10 @@ una medición gratis**, siempre que se haga así.
 - **La consigna se queda en 7,70.** Bajarla a 7,2-7,4 como decía el plan aumentaría la sobresaturación
   de CO₂, la desgasificación y con ello el ácido que la bomba tiene que echar cada día. Con el TAC
   cerca del suelo, **la consigna alta protege**.
+  > ⚠️ **El MOTIVO de este punto caducó, no la conclusión.** El «TAC cerca del suelo» era el TA 40 de
+  > la tira mal tomada; la titulación del 17-08 lo puso en 85-110, en banda. La consigna sigue en 7,70,
+  > pero por el argumento del índice de Langelier — ver «19 de agosto, tarde».
+
 
 ## Lectura de la noche 17→18 de agosto: las dos predicciones, contestadas
 
@@ -1501,6 +1505,120 @@ congela**. Lo que ahora sí cambia de naturaleza es el **contralavado**: con rel
 lavado de filtro pasa a ser una **retirada real de calcio**, porque el agua que se va lleva sus
 300 mg/L y la que entra a sustituirla no lleva ninguno. Lento, gratis, y por primera vez en la
 dirección correcta.
+
+## 19 de agosto, tarde: se apaga la segunda bomba, el reloj pasa a tres bloques y la consigna se queda
+
+Tres decisiones del mismo día, y las tres se apoyan en datos que aportó el usuario sobre la marcha.
+
+### Dato nuevo: las dos bombas comparten filtro Y bomba de pH
+
+No estaba registrado. Cambia la lectura por completo:
+
+```
+Una bomba Hayward   12-14 m³/h   ← el caudal para el que está dimensionado el filtro
+Dos bombas          24-28 m³/h   ← el doble por el MISMO lecho de arena
+```
+
+La arena atrapa la suciedad porque el agua pasa despacio. Al doblar el caudal el agua cruza el lecho
+demasiado rápido, la suciedad lo atraviesa y con el tiempo puede abrir canales. **Dos bombas no
+filtraban el doble: filtraban peor.**
+
+La segunda entró el 17-08 para mezclar rápido durante la titulación. Ese trabajo está hecho.
+
+- **Se apaga la segunda.** Queda como reserva y como herramienta de mezcla para dosificar.
+- **Hacerla girar 10-15 min una vez al mes**, o se agarra.
+- Ahorro colateral: del orden de **40-60 EUR/mes** de bomba que no aportaba nada.
+
+Con una sola bomba: **4,6 renovaciones al día**. Una piscina doméstica pide 1-2. Sobra.
+
+### El reloj: de ocho bloques a tres
+
+El reparto anterior (2 h ON / 1 h OFF) daba 16 h/día y **ocho arranques**. El usuario propone bajar a
+dos filtraciones. Se le recomiendan **tres**, y el motivo es el cianúrico.
+
+**El CYA está a cero** — parche naranja en las tres tiras del 19-08. Sin estabilizante no hay filtro
+solar en el agua y el sol destruye el cloro libre en un par de horas. Con dos bloques quedan dos
+huecos de 4-5 h y uno cae con sol sí o sí. Con tres, **ningún hueco diurno pasa de 3 h**.
+
+Reparto puesto, **15 h/día** (regla temperatura/2, agua a ~30 °C), 20 segmentos de 15 min por bloque:
+
+```
+06:00 → 11:00    deja el agua clorada antes de que apriete el sol
+13:00 → 18:00    el pico de sol y de baño
+21:00 → 02:00    noche; solo 1 h en punta tarifaria
+```
+
+Huecos: 2 h a mediodía, 3 h al atardecer con el sol cayendo, 4 h de madrugada donde no se consume
+nada.
+
+**Antes de tocar un pin, poner el disco en hora.** Va ~12 min adelantado (medido el 17-08): sin
+corregirlo, todo arranca 12 minutos antes de lo programado.
+
+**A vigilar el 23-08:** se pasa de 16 h a 15 h y el clorador **solo produce con la bomba en marcha**.
+Es un 6 % menos de producción sobre un FC de 2,0 ppm que está en el centro exacto de la banda. Hay
+margen, pero hay que confirmarlo.
+
+### La consigna de pH se queda en 7,70 — con un argumento nuevo
+
+El usuario pregunta si hay que bajarla. **Se queda**, pero el motivo que había escrito ya no vale y
+hay que sustituirlo.
+
+**Lo que caduca:** en «Hallazgos sueltos» está escrito *«con el TAC cerca del suelo, la consigna alta
+protege»*. Eso se escribió creyendo que la alcalinidad estaba en 40. La titulación del 17-08 la puso
+en **85-110, dentro de banda**. Bajar la consigna gasta alcalinidad, sí, pero hay colchón. **Ese
+argumento ya no bloquea nada.**
+
+**Lo que decide de verdad es el índice de Langelier**, y lo que dice es que no tenemos el dato:
+
+```
+LSI = pH + f(T) + f(Ca) + f(TAC) − constante
+
+pH 7,70 · 30 °C · TAC 100 · dureza 300           →  LSI ≈ +0,18   ligeramente incrustante
+                    ...si esos 300 fueran CALCIO →  LSI ≈ +0,07   equilibrio
+```
+
+**Los 300 salen de un parche de tira, y una tira mide dureza TOTAL, no calcio.** El calcio suele ser
+el 70-80 % de esa cifra. Según cuál sea, el agua está en equilibrio o levemente incrustante.
+
+Y aquí está el argumento: **mover la consigna 0,1 mueve el LSI 0,1. La incertidumbre del dato de
+entrada es MAYOR que el efecto de la corrección.** Sería apuntar con un instrumento que no distingue
+entre «hay que actuar» y «no hay nada que hacer».
+
+Razones de apoyo, por orden de peso:
+
+- **No hay problema de desinfección que arreglar.** A 7,70 solo el 39 % del cloro es HOCl activo, y a
+  7,50 sería el 50 % — pero el **ORP está en 700 mV**, por encima del umbral de 650. El lazo funciona.
+- **Una variable cada vez.** El mismo día se cambia el reparto de filtración y entran 1,31 m³ de agua
+  nueva. Con el pH movido también, un desplazamiento el sábado no tendría autor identificable.
+- **El ácido es del 38 %**, 3,1× más fuerte que el de los números originales. Más dosificación con ese
+  producto es donde este proyecto ya estuvo cerca del desastre.
+
+**Y el arreglo estructural ya está en marcha:** contralavado + relleno blando bajan la dureza, y bajar
+la dureza baja el LSI **sin gastar una gota de ácido ni un miligramo de alcalinidad**. Se está
+atacando el término correcto de la ecuación.
+
+Si el 23-08 sale que hay que corregir: **7,70 → 7,60, un escalón, y se mide.** Nunca directo a 7,4.
+
+> **PENDIENTE, y es el dato que desbloquea la decisión del pH: una DUREZA CÁLCICA de verdad**, con
+> reactivo de calcio, no con tira. Es el mismo dato que dirá cuándo parar de contralavar (suelo:
+> 200-400 mg/L; por debajo de 150 el agua se vuelve agresiva y ataca la lechada del gresite).
+
+### Corrección de método: el cuello de botella del relleno es la manguera, no el equipo
+
+Se estimó el llenado de 1,31 m³ en 30-50 min a partir del caudal del descalcificador (1,5-2,5 m³/h).
+**Está mal planteado.** El que manda es el grifo con manguera, del orden de 10-15 L/min:
+
+```
+1.310 L ÷ 12 L/min  ≈  1 h 50 min
+```
+
+Y el criterio de parada tampoco son las filas: **es la boca del skimmer**, con el agua entre dos
+tercios y tres cuartos de la abertura. Pasado ese punto el skimmer deja de barrer la superficie; por
+debajo, traga aire. La boca es un instrumento; las filas son una estimación.
+
+La tira del grifo se toma **con el grifo todavía abierto**, justo antes de cerrar: es el agua que ha
+pasado por la resina después de tirarle 1,3 m³ seguidos. Si se cierra y se espera, la tubería se
+queda quieta y habría que purgar otros 20 L para medir lo mismo.
 
 ## Lección de método de la semana
 
