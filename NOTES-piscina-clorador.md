@@ -1620,6 +1620,67 @@ La tira del grifo se toma **con el grifo todavía abierto**, justo antes de cerr
 pasado por la resina después de tirarle 1,3 m³ seguidos. Si se cierra y se espera, la tubería se
 queda quieta y habría que purgar otros 20 L para medir lo mismo.
 
+## 19 de agosto, 20:03: la tira de control tras el relleno, y el ORP baja a 667
+
+Cierre del día. Dos medidas: una que confirma el arreglo y otra que abre la vigilancia del sábado.
+
+### La tira de control del grifo, y esta vez con protocolo limpio
+
+Toma del usuario, y merece quedar escrita porque es la mejor del proyecto: **cerró el grifo, lo
+reabrió, dejó correr 3 s, enjuagó el vaso tres veces, tomó la muestra, esperó 10 s, sumergió la tira
+y fotografió a los 20-22 s cronometrados.**
+
+Resultado, con el bote enfocado en la misma foto:
+
+```
+dureza (TH)      Lab  L 74,5   a* +9,1   b* -50,7      AZUL     ← agua dura da a* +44
+alcalinidad (TA) Lab  L 60,2   a* +5,1   b* -58,9      azul profundo, sin cambio
+FC / TC / CYA    a cero — es agua de red, es lo que tiene que salir
+```
+
+**El descalcificador aguantó los 1,31 m³ seguidos.** Era el riesgo vivo: una resina que llevaba
+muchísimo tiempo saturada y a la que se le pide de golpe un tercio de su capacidad entre ciclos.
+
+Y otra vez el control interno que vale más que la propia medida: **la alcalinidad no se movió.**
+Dureza al suelo con alcalinidad intacta es la firma del intercambio iónico, no un artefacto de foto.
+
+> **Cautela de método:** los ΔE **entre fotos distintas no valen** — cambia la luz, cambia el blanco
+> de referencia y cambia el balance de la cámara. Lo que se compara entre tandas es el **signo y el
+> orden de magnitud de a\***, no la distancia. Dentro de una misma foto sí vale la distancia.
+
+### ORP 667: baja, y es coherente
+
+Foto del display del clorador (Klinwass): **667 mV**. Venía de **700-709** el 18-08.
+
+Dos causas que apuntan en la misma dirección y no hay que asustarse con ninguna:
+
+- **Acaban de entrar 1,31 m³ de agua sin cloro** — una dilución del 3,3 % del cloro libre.
+- La lectura se toma **al final de un bloque de filtración** (el de 18:47-20:40), que es donde el ORP
+  está en su punto más bajo del ciclo.
+
+**Sigue por encima de 650**, que es el umbral de desinfección correcta. **No se toca nada.** Pero es
+**el número del sábado**: si el reparto nuevo de 15 h se queda corto, va a aparecer justo ahí.
+
+El pH del display sale ilegible en la foto. El usuario lo reporta en **7,70**. Queda registrado como
+**reportado, no medido**.
+
+### Corrección del usuario: el orden de la faena del reloj
+
+Se había escrito «poner el disco en hora y después los pines». **Está mal, y lo corrige el usuario:**
+
+```
+1. PARO del grupo
+2. Configurar los pines
+3. Puesta en hora  ← lo ÚLTIMO
+```
+
+El motivo es mecánico y sólido: **manipular los pines mueve el disco.** Si se pone en hora primero,
+la hora se pierde mientras se recorren los 96 segmentos. La puesta en hora va al final, cuando ya no
+se va a volver a tocar el disco.
+
+Lo que sí se mantiene del consejo anterior: **hacerlo todo con el grupo parado**, para no darle un
+corte seco al clorador en plena producción.
+
 ## Lección de método de la semana
 
 Lo que ha decidido cada resultado de estos siete días **no ha sido la química**. Ha sido el **punto
