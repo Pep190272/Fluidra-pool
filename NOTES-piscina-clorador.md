@@ -1414,6 +1414,94 @@ ni ordenador, **se ve a simple vista**. Si no se ve a ojo, no ha pasado.
 
 **Protocolo completo de mañana en `plan-descalcificador-2026-08-19.md`.**
 
+## 19 de agosto, 18:28: el descalcificador ABLANDA — y el grifo de la piscina cuelga aguas arriba
+
+Primer resultado positivo del aparato en todo el proyecto, y de paso queda contestada la pregunta de
+fontanería que quedó abierta el 18-08.
+
+### El material
+
+Dos fotos de la misma tanda, tomadas con segundos de diferencia, con el bote de patrones al lado:
+
+- **Foto A** — dos tiras (grifo de jardín y grifo cercano a la piscina).
+- **Foto B** — las mismas dos, más una **tercera: el grifo interior más lejano de la piscina**.
+
+Colorimetría con el método de la casa: línea central de cada tira ajustada por regresión, muestreo
+del 50 % central de cada parche, **normalización con el blanco de su propia tira** (no con el de la
+foto: cada tira está a una altura distinta y recibe distinta luz) y ΔE en Lab.
+
+### El número
+
+ΔE por parche, siempre entre tiras de **la misma foto** — misma luz, mismo instante, misma carta:
+
+| Comparación | pH | TA | **TH (dureza)** | CYA |
+|---|---|---|---|---|
+| Foto A: tira 1 vs 2 | 8,2 | 10,1 | **6,0** | 13,1 |
+| Foto B: tira 1 vs 2 | 3,8 | 4,8 | **0,4** | 3,1 |
+| Foto B: tiras 1/2 vs **3** | 13,2 | 9,0 | **46,2** | 21,1 |
+
+Suelo de ruido establecido el 18-08: **ΔE 9-10**.
+
+Lab del parche de dureza:
+
+```
+tira 1  L 65,0   a* +44,2   b* -11,5     MAGENTA   → 300+ mg/L
+tira 2  L 64,9   a* +44,5   b* -11,8     MAGENTA   → 300+ mg/L   (ΔE 0,4 entre ellas: la misma agua)
+tira 3  L 59,6   a*  +4,4   b* -34,1     AZUL      → 0-100 mg/L
+```
+
+El parche **cambia de familia de color**, no de tono. Es la señal que el plan pedía buscar a ojo.
+
+### El artefacto que había que descartar, y por qué no cuela
+
+La tira 3 está **visiblemente más mojada** que las otras dos: recién sumergida. Y el 18-08 quedó
+demostrado que el parche de dureza **deriva al alza** con el tiempo (300 → 800 entre los 20 s y el
+minuto). Una tira leída demasiado pronto sale, por tanto, **falsamente azul**. La objeción es
+legítima y hay que contestarla antes de celebrar nada.
+
+La contesta el propio parche de al lado. **La alcalinidad de la tira 3 no se mueve**: ΔE 9,0, dentro
+del ruido, y con el azul si acaso *más* revelado que en las otras dos. Si el problema fuera falta de
+tiempo de revelado, **TA caería junto con TH**. No cae.
+
+Y esa disociación —**dureza al suelo, alcalinidad intacta**— no es una casualidad de la foto: es la
+**firma química del intercambio iónico**. Un descalcificador retira Ca²⁺ y Mg²⁺ y los cambia por Na⁺;
+la alcalinidad, que son bicarbonatos, sale igual que entró. El resultado se valida solo.
+
+### Qué queda decidido
+
+Aplicando la tabla del Paso 3 del plan (fila 2):
+
+| Interior lejano | Cercano a la piscina | Jardín | Lectura |
+|---|---|---|---|
+| **Blando** | **Duro** | **Duro** | El equipo **funciona**; el grifo de la piscina está **aguas arriba** del descalcificador |
+
+- **El descalcificador está regenerado y ablanda.** La causa era la que dijo el usuario: llevaba sin
+  sal. Los dos ciclos han bastado. Y como los equipos domésticos regeneran solos por volumen, **no
+  hay que volver a bajar al parking**.
+- **El grifo de jardín sale duro: control superado.** Ya se sabía que va aparte.
+- **El grifo cercano a la piscina sale duro: la sospecha del usuario era correcta.** Ese punto de
+  toma no cuelga del descalcificador. Con ΔE 0,4 contra el de jardín, es literalmente la misma agua
+  de red — y eso apunta a que **está en el mismo ramal exterior**. Encaja con la práctica habitual de
+  instalación: los grifos de fuera se cuelgan **a propósito** aguas arriba del equipo, para no gastar
+  sal regando. El de la piscina se quedó ahí por estar fuera, no por un error de montaje.
+
+### La consecuencia práctica: el punto de relleno cambia
+
+**No se rellena por el grifo de la piscina.** Ese grifo mete agua de 300+ mg/L y es el que ha estado
+alimentando el trinquete de dureza que se come la célula.
+
+Dos vías, y la barata funciona hoy mismo:
+
+1. **Manguera desde el grifo interior blando.** Coste cero, disponible ya.
+2. **Repicar la tubería** para colgar el grifo de la piscina del descalcificador. Es la solución
+   definitiva, pero el equipo está en un parking en obras: no corre prisa.
+
+Y conviene recordar lo que el relleno blando **no** hace (Paso 4 del plan): **no baja la dureza, la
+congela**. Lo que ahora sí cambia de naturaleza es el **contralavado**: con relleno blando, cada
+lavado de filtro pasa a ser una **retirada real de calcio**, porque el agua que se va lleva sus
+300 mg/L y la que entra a sustituirla no lleva ninguno. Lento, gratis, y por primera vez en la
+dirección correcta.
+
 ## Lección de método de la semana
 
 Lo que ha decidido cada resultado de estos siete días **no ha sido la química**. Ha sido el **punto

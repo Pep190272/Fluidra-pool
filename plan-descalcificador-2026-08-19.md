@@ -16,6 +16,28 @@ Sal echada y un primer reciclo lanzado el 18-08 por la tarde.
 
 ---
 
+---
+
+## ✅ RESULTADO — 19 de agosto, 18:28. Plan ejecutado y cerrado
+
+**El descalcificador ABLANDA.** Tres tiras, dos fotos, colorimetría: el parche de dureza del grifo
+interior lejano pasa de magenta a **azul** (Lab a\* +44 → **+4,4**), **ΔE 46,2** contra los otros dos
+grifos, con un suelo de ruido de 9-10. Los grifos de **jardín** y **cercano a la piscina** salen
+**duros** y son la misma agua entre sí (ΔE 0,4).
+
+Lectura según la tabla del Paso 3, **fila 2**: *el equipo va, pero el grifo de la piscina está aguas
+arriba*.
+
+**Decisión:** rellenar la piscina **con manguera desde el grifo interior blando**. Repicar la tubería
+del grifo de la piscina queda como mejora futura, sin prisa: el equipo está en un parking en obras.
+
+**No hay que volver a bajar al parking.** Los ciclos sucesivos los dispara el uso normal de la casa.
+
+Desarrollo completo, tabla de ΔE y refutación del artefacto de tiempo en
+`NOTES-piscina-clorador.md`, sección «19 de agosto, 18:28».
+
+---
+
 ## Paso 0 — Antes de tocar nada: el primer reciclo NO cuenta
 
 **La salmuera necesita de 4 a 6 horas para saturarse**, mejor toda la noche. El ciclo que se lanzó
@@ -24,8 +46,8 @@ justo después de echar la sal **aspiró agua, no salmuera**. La resina se regen
 No sirve de nada medir sin repetir el ciclo. Y una resina que lleva mucho tiempo saturada puede
 necesitar **dos o tres regeneraciones** para volver del todo.
 
-- [ ] Lanzar una **segunda regeneración** completa.
-- [ ] Esperar a que termine (un ciclo típico son **90-120 minutos**).
+- [x] Lanzar una **segunda regeneración** completa.
+- [x] Esperar a que termine (un ciclo típico son **90-120 minutos**).
 
 ### Lo que SÍ hay que mirar, ahora que el bypass está descartado
 
@@ -92,9 +114,9 @@ perfecto y **a la piscina no le llega nada**.
 Una tira por grifo, y **todas las tiras de la misma tanda en una sola foto**, con el bote al lado.
 Esa es la condición que hace comparables las lecturas: misma luz, misma carta, mismo instante.
 
-- [ ] Grifo interior lejano (control: **debe salir blando**)
-- [ ] Grifo cercano a la piscina (**la incógnita**)
-- [ ] Grifo de jardín (control: **debe salir duro**)
+- [x] Grifo interior lejano (control: **debe salir blando**) → **BLANDO. Control superado.**
+- [x] Grifo cercano a la piscina (**la incógnita**) → **DURO. Cuelga aguas arriba del equipo.**
+- [x] Grifo de jardín (control: **debe salir duro**) → **DURO. Control superado.**
 
 Reglas de la tira, ya pagadas a base de errores en este proyecto:
 
@@ -115,7 +137,7 @@ azul**. Son ~100 ΔE. No hace falta medir nada para saber si ha funcionado.
 | Interior lejano | Cercano a la piscina | Lectura | Qué se hace |
 |---|---|---|---|
 | Blando | **Blando** | **Premio.** El descalcificador va y el punto de relleno cuelga de él | Rellenar siempre por ahí |
-| Blando | Duro | El equipo va, pero el grifo de la piscina está aguas arriba | Decidir: repicar la tubería, o tirar manguera desde un grifo blando |
+| **Blando** ✅ | **Duro** ✅ | **← ESTE ES EL CASO REAL (19-08).** El equipo va, pero el grifo de la piscina está aguas arriba | **Manguera desde el grifo interior blando.** Repicar la tubería queda como mejora futura |
 | **Duro** | Duro | El equipo **sigue sin regenerar** tras dos ciclos | **No bajar otra vez.** Dejar unos días de uso normal (el equipo regenera solo) y volver a medir arriba. Si sigue duro: puente de sal, falta de agua en la salmuera o resina agotada de verdad |
 
 **Dependencia que conviene tener clara:** las dos primeras filas **solo se pueden leer si el
