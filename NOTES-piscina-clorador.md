@@ -948,6 +948,11 @@ reloj de pared.
 > Las paradas son menos limpias (±8 min) porque la transición a `unknown` se detecta en el sondeo
 > siguiente, no en el instante del corte. Los **arranques** sí son inmediatos, y por eso son los que
 > valen para medir el desfase.
+>
+> **CORRECCIÓN (20-08):** la conclusión operativa es correcta —el arranque es el bueno— pero el
+> motivo escrito aquí es falso. El sondeo es de **34 s**, así que no puede explicar ±8 min. Los
+> minutos de las paradas los pone la **caché de la nube de Fluidra**, que sigue sirviendo el último
+> valor conocido después del corte. Ver «20 de agosto».
 
 ## Pendiente
 
@@ -1680,6 +1685,130 @@ se va a volver a tocar el disco.
 
 Lo que sí se mantiene del consejo anterior: **hacerlo todo con el grupo parado**, para no darle un
 corte seco al clorador en plena producción.
+
+## 20 de agosto: el reloj sigue adelantado, el sondeo son 34 s, y el lazo va mejor
+
+Día sin intervención. **No se tocó nada: ni consigna, ni bomba, ni pines, ni el disco del reloj.**
+Solo se leyó. Y de leer salieron una corrección de método y una respuesta que llevaba tres días
+pendiente.
+
+### La hora exacta del arranque: 05:53:19
+
+Se leyó del recorder, sin madrugar y sin cronometrar nada, con la receta de siempre
+(`binary_sensor.piscina_chlorinator_alarma`, `unknown` = sin corriente):
+
+```
+19-08 20:27:40  unknown   fin de bloque
+19-08 20:55:30  off       ARRANQUE del bloque de las 21:00   ->  4,5 min de ADELANTO
+20-08 02:01:47  unknown   fin del bloque 21-02
+20-08 05:53:19  off       ARRANQUE del bloque de las 06:00   ->  6,7 min de ADELANTO
+```
+
+**La corrección de 5 min del 19/08 por la noche no arregló nada: empeoró unos 2 minutos.** Se pasó
+de 4,5 a 6,7 min de adelanto. El disco se movió en el sentido equivocado, y además con mano
+imprecisa, porque no fueron los 5 min enteros en ninguna dirección.
+
+La rejilla de lectura que se había dejado escrita (06:00 en hora / 05:55 / 05:50 / 06:05) **no
+contemplaba este resultado intermedio**. Cuando una rejilla de interpretación solo tiene casillas
+discretas y el dato cae entre dos, la rejilla es la que está mal.
+
+### Corrección: el sondeo son 34 segundos, y los ±8 min de las paradas no vienen de ahí
+
+Se venía suponiendo que las paradas tenían ±8 min de holgura **porque la transición se detecta en el
+sondeo siguiente**. Eso es falso, y se comprueba mirando cuántas filas escribe cada sensor:
+
+```
+sensor.piscina_chlorinator_ph / orp / salinidad / temperatura
+   05:53:19 · 05:53:53 · 05:54:27 · 05:55:03 · 05:55:37 · 05:56:12 ...
+   ────────────────────────────────────────────────────────────────
+   una muestra cada ~34 s
+```
+
+Con 34 s de cadencia, **la incertidumbre del ARRANQUE es de medio minuto, no de ocho**. Y entonces,
+¿de dónde salen los ±8 min de las paradas? De otro sitio completamente:
+
+| | arranque | parada |
+|---|---|---|
+| Qué pasa | el equipo reconecta y la nube sirve dato vivo | el equipo se queda sin corriente |
+| Qué ve HA | valores nuevos inmediatamente | la nube **sigue sirviendo dato cacheado** un rato |
+| Holgura | < 35 s | varios minutos, hasta que caduca la caché |
+
+**Son dos mecanismos distintos, no el mismo mecanismo con dos magnitudes.** La regla operativa que
+ya teníamos —usar siempre el arranque, nunca la parada— sobrevive intacta; lo que cambia es el
+motivo, y el motivo importa porque dice cuánto vale cada número.
+
+Contraste que lo valida: la parada de las 02:01:47, con el disco 6,7 min adelantado, implica corte
+real hacia la 01:53 y unos 8 min de caché. Encaja.
+
+### Decisión: el disco NO se vuelve a tocar
+
+6,7 minutos sobre bloques de 5 horas es un **2,2 %**. No cambia las 15 h/día, no cambia el suelo del
+ORP, no cambia nada medible. Y ajustar a mano un disco mecánico tiene **más error que el defecto que
+corrige** — está demostrado en este mismo episodio, donde un intento de mover 5 min acabó moviendo
+-2 en el sentido contrario.
+
+> **Regla:** no se corrige un desvío cuya magnitud es menor que el error del procedimiento de
+> corrección. Se documenta y se deja.
+
+### ¿Mejor o peor que antes? Mejor. Y la prueba no es el ORP
+
+Ventana comparable, 06:00-08:34 locales, los mismos minutos cada día:
+
+| día | ORP medio | pH (rango) | sal | temp | muestras en alarma |
+|---|---|---|---|---|---|
+| 16-08 | 704 | 7,77 | 5,27 | 27,7 | **310** |
+| 17-08 | 709 | 7,91 (±0,34) | 5,31 | 27,6 | **805** |
+| 18-08 | 701 | 7,69 | 5,70 | 28,3 | 2 |
+| 19-08 | 696 | 7,69 (±0,28) | 5,76 | 29,0 | **0** |
+| 20-08 | 697 | 7,70 (±0,04) | 5,62 | 29,3 | **0** |
+
+**Trampa que casi se cuela, y queda como regla:** el ORP de hoy sale 7 mV por debajo del 16-08, y
+eso *no significa nada*. Los días 16-18 iban con el reloj de ocho bloques, así que esa ventana
+**incluye tramos con el grupo parado**, y con el grupo parado la nube sirve dato congelado. Se ve
+en el recuento de filas: **19-41 muestras esos días contra 271 hoy**. Hoy es el primer día con la
+ventana entera en marcha. Comparar 697 contra 704 es comparar una media buena contra una media
+hecha de valores cacheados.
+
+> **Regla:** antes de comparar dos medias, comparar el **número de muestras** que las sostienen. Una
+> media sobre 20 filas congeladas y otra sobre 271 filas vivas no son la misma clase de objeto.
+
+Lo que sí es limpio, y decide:
+
+- **Alarmas.** 805 muestras en alarma el 17-08, 310 el 16, **dos** el 18, **cero** el 19 y el 20.
+  La curva no admite discusión.
+- **Planitud del pH.** Hoy es el día **más plano de toda la serie**: 0,04 de recorrido, frente a
+  0,34 del 17-08. Quitar la segunda bomba fue el acierto — la peristáltica ya no pelea contra
+  24-28 m³/h por un lecho dimensionado para 12-14.
+- **La cuenta que cierra el argumento.** Hoy sostiene 697 mV con **una hora menos de filtración**
+  (15 vs 16), **una bomba en vez de dos** y **1,6 °C más de agua** (29,3 vs 27,7), y más calor es
+  más consumo de cloro. Mismo resultado, con menos medios y en peores condiciones. Eso no es
+  empatar.
+
+Y el 667 mV del 19/08 queda explicado del todo: era final de bloque justo después de meter 1,31 m³
+sin cloro. Hoy, a la misma altura del ciclo, 697. No había degradación del lazo.
+
+### Predicción validada: la dilución de la sal
+
+El 19/08 se calculó que el relleno de 1,31 m³ bajaría la salinidad unos **-0,15 g/L**.
+
+```
+19-08   5,76 g/L
+20-08   5,62 g/L
+        ───────
+        -0,14 g/L    ← predicho -0,15
+```
+
+Primera predicción cuantitativa del proyecto que acierta a la primera. Y confirma de paso que el
+sensor, con **media de ventana larga** (271 muestras), sí es utilizable pese al offset de +1,3 g/L y
+a la oscilación de ±0,5: **el offset es constante, así que las DIFERENCIAS son buenas aunque el
+valor absoluto no lo sea.**
+
+### Pendiente
+
+- **21/08, 19:00** — dureza cálcica con reactivo EDTA (kit comprado el 20/08 en Amazon). Dos
+  muestras: piscina (dato del LSI) y grifo interior blando purgando 20 L, que es la prueba de fuego
+  del descalcificador con un número en vez de un color. Aviso en Calendar con el protocolo.
+- **23/08, 09:00** — revisión completa del agua. El ORP sigue siendo el número.
 
 ## Lección de método de la semana
 
