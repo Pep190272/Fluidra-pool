@@ -1803,11 +1803,80 @@ sensor, con **media de ventana larga** (271 muestras), sí es utilizable pese al
 a la oscilación de ±0,5: **el offset es constante, así que las DIFERENCIAS son buenas aunque el
 valor absoluto no lo sea.**
 
+### Lectura de cierre, 11:00: el bloque de mañana entero, y el hueco que viene
+
+Bloque 06:00-11:00 completo, **528 muestras** — el primer bloque de este proyecto medido entero y
+con dato vivo de principio a fin.
+
+```
+                media bloque   última hora   último (10:59)   rango
+ORP                 692,2         680,7           677          677-701
+pH                  7,70          7,70            7,70         7,68-7,72
+salinidad           5,63          5,73            5,71         5,45-6,00
+temperatura        29,2          29,1            29,1         29,1-29,4
+alarmas            0 de 527 muestras
+```
+
+**El perfil dentro del bloque es un diente de sierra, y hay que leerlo como tal:** 697 de media en
+las primeras 2,5 h, 681 en la última hora, 677 en la muestra final. El ORP sube al principio del
+bloque y decae hacia el final. **Un valor suelto no dice nada si no se dice a qué altura del ciclo
+se tomó.**
+
+Y ahora la comparación que importa, a la MISMA altura del ciclo:
+
+```
+19-08  final de bloque   667 mV
+20-08  final de bloque   677 mV     ← +10
+```
+
+**Diez milivoltios mejor que ayer en el punto más desfavorable del día.** El pH, además, no se movió
+de 7,70 en 528 muestras seguidas.
+
+### Predicción para el hueco de 11:00 a 13:00 — se comprueba mañana sin hacer nada
+
+Hoy es **la primera vez** que se produce el hueco 11-13 del reparto nuevo. Y el 15/08 quedó medido
+lo que cuestan dos horas sin filtrar: **36 mV** (680 → 644, con sol y a 30 °C).
+
+Aplicado al arranque de hoy:
+
+```
+677 (final de bloque)  -  ~30 mV  =  645-660 al arrancar a las 13:00
+```
+
+Rebaja deliberada sobre los 36 mV medidos: aquel hueco era de tarde, con más UV acumulado; este es
+de mediodía a primera hora de la tarde. Pero **la horquilla roza el suelo de 650**, y ahí está el
+punto débil del reparto de tres bloques.
+
+- **Si sale por encima de 660** → el hueco no es problema, no se toca nada.
+- **Si sale por debajo de 650** → la palanca NO es el pH: es devolver horas de filtración o subir
+  el % de cloración. Las horas ponen el suelo del ORP.
+
+Se lee mañana del recorder, en la muestra del arranque de las 13:00 de hoy. No hay que estar
+delante.
+
+### La caché de la nube, pillada en directo
+
+Detalle que confirma el hallazgo de esta mañana por segunda vez y de forma independiente: con el
+disco 6,7 min adelantado, el bloque de las 11:00 **se cortó de verdad hacia las 10:53**. Y a las
+**10:59:36 seguían entrando muestras** con valores nuevos.
+
+Seis minutos de datos después del corte. Eso no lo puede producir un sondeo de 34 s: es la nube
+sirviendo su último estado conocido. **Comprobación pendiente para mañana:** a qué hora exacta cayó
+el `unknown` de este corte. Si la explicación es correcta, tiene que estar varios minutos después de
+las 10:53, nunca antes.
+
 ### Pendiente
 
 - **21/08, 19:00** — dureza cálcica con reactivo EDTA (kit comprado el 20/08 en Amazon). Dos
   muestras: piscina (dato del LSI) y grifo interior blando purgando 20 L, que es la prueba de fuego
   del descalcificador con un número en vez de un color. Aviso en Calendar con el protocolo.
+- **21/08** — leer del recorder las dos comprobaciones que deja hoy: el **ORP del arranque de las
+  13:00** (predicho 645-660) y la **hora del `unknown`** del corte de las ~10:53 (tiene que caer
+  varios minutos después).
+- **21/08** — redactar el issue para `foXaCe/Fluidra-pool` con los tres hallazgos que sirven a
+  terceros: el tecnoLC2 no tiene cloro libre (11 componentes, dos sondas), la caché de la nube
+  retrasa la detección del corte de corriente, y el truco de medir las horas reales de filtración
+  con las transiciones del `binary_sensor` de alarma. Nada de eso necesita datos de la casa.
 - **23/08, 09:00** — revisión completa del agua. El ORP sigue siendo el número.
 
 ## Lección de método de la semana
