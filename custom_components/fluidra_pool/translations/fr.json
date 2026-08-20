@@ -6,10 +6,14 @@
       "reconfigure_successful": "Configuration mise à jour avec succès"
     },
     "error": {
+      "account_not_confirmed": "Ce compte n'a pas encore été confirmé. Ouvrez l'app Fluidra Pool, terminez la vérification de l'adresse e-mail envoyée par Fluidra, puis réessayez.",
+      "account_not_found": "Aucun compte Fluidra n'existe pour cette adresse e-mail sur les serveurs EMEA (Europe). Vérifiez la saisie — et notez que les comptes enregistrés hors EMEA ne sont pas encore pris en charge.",
       "cannot_connect": "Impossible de se connecter à l'API Fluidra",
       "invalid_auth": "Échec de la connexion. Vérifiez votre e-mail et votre mot de passe. Si votre compte est enregistré hors de la région EMEA (Europe), il n'est pas pris en charge actuellement.",
       "invalid_mfa_code": "Code de vérification invalide ou expiré. Veuillez réessayer.",
       "no_pools": "Aucune piscine trouvée. Assurez-vous que vos équipements sont configurés dans l'app Fluidra Pool",
+      "password_reset_required": "Fluidra exige une réinitialisation du mot de passe pour ce compte. Réinitialisez-le dans l'app Fluidra Pool ou sur le site Fluidra, puis connectez-vous ici avec le nouveau mot de passe.",
+      "too_many_attempts": "Trop de tentatives de connexion. Fluidra a temporairement bloqué ce compte — patientez quelques minutes avant de réessayer.",
       "unknown": "Erreur inattendue"
     },
     "step": {
@@ -322,6 +326,9 @@
       "auto_mode": {
         "name": "Mode Auto"
       },
+      "aux_schedule_enable": {
+        "name": "Aux {aux_number} Planning {schedule_id}"
+      },
       "boost_mode": {
         "name": "Mode Boost"
       },
@@ -348,6 +355,12 @@
       }
     },
     "time": {
+      "aux_schedule_end": {
+        "name": "Aux {aux_number} Planning {schedule_id} Fin"
+      },
+      "aux_schedule_start": {
+        "name": "Aux {aux_number} Planning {schedule_id} Début"
+      },
       "light_schedule_end": {
         "name": "Planning Éclairage {schedule_id} Fin"
       },
@@ -453,6 +466,9 @@
     "schedule_overlap": {
       "message": "Cet horaire chevauche un autre horaire actif"
     },
+    "schedule_overnight_unsupported": {
+      "message": "Impossible de définir un planning de {start_time} à {end_time} : l'heure de fin doit être postérieure à l'heure de début. Un planning ne peut pas traverser minuit — utilisez deux plannings, l'un jusqu'à 23:59 et l'autre à partir de 00:00."
+    },
     "schedule_set_failed": {
       "message": "L'appel à l'API Fluidra a échoué lors de la définition du programme pour {device_id}"
     },
@@ -461,6 +477,9 @@
     },
     "schedule_vs_pump_unsupported": {
       "message": "Impossible d'écrire les plannings sur {device_id} : cet appareil est configuré avec une pompe à vitesse variable, dont les créneaux portent aussi une vitesse de consigne que ce service ne sait pas définir. Écrire un créneau incomplet empêche l'application Fluidra de charger l'appareil. Utilisez l'application Fluidra pour les plannings de pompe à vitesse variable."
+    },
+    "schedule_write_not_stored": {
+      "message": "Impossible d'écrire les plannings sur {device_id} : cet appareil enregistre autre chose que ce qui lui est envoyé — vérifié sur matériel, les heures et les jours reviennent modifiés, et l'appareil applique le planning modifié. L'écriture ferait fonctionner votre équipement à des heures non choisies. Utilisez l'application Fluidra pour les plannings de cet appareil en attendant la résolution (issue #174)."
     },
     "switch_set_failed": {
       "message": "Échec du changement d'état de l'interrupteur"

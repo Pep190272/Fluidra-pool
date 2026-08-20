@@ -5,7 +5,178 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [2.81.1] - 2026-08-20
+
+### Fixed
+
+- **The GenSalt OE iQ mode select is gone — it was writing into the ORP setpoint.** On these
+  units the OFF/ON/AUTO select landed on component 20, which is not a mode register but the
+  ORP target in millivolts: it read back 700, found no match in `{0, 1, 2}` and fell through
+  to "Off", and picking On or Auto wrote `1` or `2` into that 700 mV setpoint before the next
+  poll snapped the select back to "Off" (Issue #195). v2.79.1 already routed tecnoLC2 units to
+  a profile that has no mode select, but it read the cloud's `thingType` from the device status
+  tree — which is only attached on the *second* poll, well after the platforms have built their
+  entities from the discovery snapshot. So the select was created anyway, on every unlisted
+  tecnoLC2 serial, and survived a full uninstall/reinstall. Discovery already fetches the tree
+  that carries `thingType`; it now keeps it on the device instead of discarding it, and the
+  profile override reads it from there first, falling back to the status tree as before. The
+  routing therefore happens before the first entity is created, for any tecnoLC2 unit the
+  registry has never seen.
+
+- **Zodiac GenSalt OE iQ pH Evo with ORP kit (CC26009948) now uses the tecnoLC2 profile that
+  maps the ORP setpoint.** Its c20 reads 700 mV next to a measured c170 of 710 mV, so the
+  setpoint register is genuinely live on this unit — unlike the ORP-less sibling model, where
+  c20 is left unmapped (Issue #195, @albo-yo).
+
+## [2.81.0] - 2026-08-20
+
+### Added
+
+- **A command the cloud accepts but never applies is now reported instead of vanishing.**
+  Fluidra answers every control write with HTTP 200 and a `reportedValue` that simply echoes
+  the `desiredValue` just sent — byte for byte the same response whether the device really
+  changed or the cloud silently dropped the order. A read-only (viewer) account, a
+  per-component ACL, a device that is offline and a schedule resetting the setpoint all look
+  identical from the write path, which is why "my setpoint keeps reverting" (#133, #195) could
+  only ever be described, never measured. Each accepted write is now recorded together with
+  the value the device reported *before* it, then judged at the end of a later poll cycle once
+  a grace period of several intervals has passed: reported value equal to the requested one is
+  verified, a value moving towards the target is progressing (a setpoint climbing by steps is
+  not a lost write), a value that moved elsewhere or disappeared is unknown, and a value that
+  did not budge at all is a lost write — logged as a single warning for that component. The
+  verdict is read from the state the poll already fetched, so it costs no extra request and it
+  goes through the normal read path the echo bypasses; offline devices are skipped, since their
+  components are carried over from an earlier poll and say nothing about the write. Nothing is
+  ever blocked: which access levels are allowed to write is still unknown, and guessing would
+  break a legitimate owner.
+
+  Lost writes are also exported in the integration's diagnostics — the component, the value
+  asked for and the value the device kept — which is what turns the report into evidence an
+  issue can be answered on (Issue #133, Refs #195).
+
+## [2.80.2] - 2026-08-19
+
+### Changed
+
+- **The README no longer under-sells the Z250iQ.** It still described the model as on/off,
+  target temperature and current temperature only — the state it was in before v2.48.0
+  (2026-07-08) promoted it to the full Z260iQ feature set. The profile has carried HVAC modes, presets,
+  the no-flow alarm, running hours and the WiFi signal since then, so a Z250iQ owner reading
+  the supported-devices list was told their unit does less than it does. The two profiles are
+  now also locked together by a test: their entity lists and feature dicts must stay equal,
+  and a Z250iQ must resolve to the Z260iQ climate behaviour. @Kal42's register-by-register
+  comparison on #139 is the evidence that both models ship the same firmware; the profiles
+  stay separate only for identification, never for behaviour (Issue #139, @Kal42).
+
+  No integration code changes in this release: the profiles were already identical, only the
+  documentation of them was wrong. Installing it changes nothing about how a device behaves.
+
+## [2.80.1] - 2026-08-19
+
+### Changed
+
+- **The login form now says what actually went wrong instead of always blaming the password.**
+  Every AWS Cognito rejection used to render as the same "check your email and password" message,
+  with the real cause reachable only in a debug log nobody enables before opening an issue. The
+  Cognito error type is now mapped to its own message: account not found on the EMEA servers,
+  account not yet confirmed, password reset required by Fluidra, and too many attempts each get
+  distinct, actionable wording in all five translation files. `NotAuthorizedException` keeps the
+  generic message on purpose — Cognito returns it both for a genuinely wrong password and for an
+  account absent from this user pool. Any unknown error type falls back to the same generic message
+  rather than failing, and the raw Cognito response body never reaches a displayed string; it stays
+  in the debug log exactly as before (Refs #201).
+
+### Fixed
+
+- **Schedules are now written in the exact shape the official app sends on the Zodiac eXO iQ.**
+  A capture of the app's own PUT body for every eXO scheduler shows three differences the
+  integration could not see before: `componentActions` carry their value under `desiredValue` (the
+  device echoes reads back as `reportedValue`, and every write path re-sent that key verbatim —
+  a key the backend does not consume), `operationName` is sent *alongside* `componentActions`
+  rather than instead of it, and `state` is not sent at all (v2.78.5 synthesised `"state": "IDLE"`
+  from the device's own reported slots; the capture shows the device adds it, the client does not).
+  All three are corrected inside `fluidra_api.set_schedule`, so no write path can drift from the
+  others again. The eXO chlorination write guard added in 2.80.0 stays in place: the corrected
+  payload is a plausible cause of the mangling, not a verified one, and it has not been re-run on
+  hardware (Issue #174, @Inervo).
+- **An auxiliary output driving a colour LED no longer reads as having no schedules.** Each aux uses
+  two registers, not one: `c22` for a plain on/off output and `c23` for a colour LED, `c24`/`c25`
+  the same way for Aux 2. Only `c22`/`c24` were scanned. Both are scanned now and the live one is
+  resolved from whichever register actually holds slots; when both do, the choice is genuinely
+  ambiguous, so the pre-existing register is kept and the assigned-function label logged rather than
+  guessed at. Together with `c19`-`c21` that accounts for all seven schedulers the unit declares. A
+  colour slot's index is exposed as a raw `colour_index` attribute with both `colour_candidates`
+  names: the two LED colour tables share neither a base nor a length (LumiPlus 0-13, Zodiac NL
+  2-15) and nothing read from the device says which family an aux drives, so naming one would be
+  wrong for the other (Issue #174, @Inervo).
+- **Changing a schedule's mode no longer breaks the Fluidra app's ability to load the device.** The
+  schedule mode select rebuilt a slot's `componentActions` from id 0 alone, dropping the target RPM
+  a variable-speed slot carries under id 1 — after which the official app could not open the device
+  until the pump type was changed on the unit itself. Every other action is now preserved
+  (Issue #174, @Inervo).
+- **An overnight schedule is now refused with an explanation instead of silently sent.** A slot is
+  two CRON expressions over one day set, so a window crossing midnight has no representation; the
+  service used to send an end time preceding its own start. It now raises an error naming the
+  workaround — two schedules, one until 23:59 and one from 00:00 (Issue #174).
+
+## [2.80.0] - 2026-08-17
+
+### Changed
+
+- **`set_schedule` now refuses to write on the Zodiac eXO iQ instead of writing a schedule the
+  device alters** — verified across four hardware runs: a slot sent as 01:02-03:04 on one day is
+  stored as `"03 02"` / `"00 04"` on *four* days, with the stored day set tracking the sent day
+  deterministically (day *n* → `{0, n+2, n+5, n+6}`). The payload matches a slot the Fluidra app
+  itself created field for field, key order included, so the shape is not the cause — the backend is
+  transforming it. Since the device then *acts* on the altered schedule, running equipment at hours
+  nobody chose, the service now returns an explanatory error. **Reading schedules is unaffected**:
+  those created in the Fluidra app still appear correctly. Use the Fluidra app to set schedules on
+  this device meanwhile (Issue #174, @Inervo).
+
+## [2.79.2] - 2026-08-17
+
+### Fixed
+
+- **A pool that discovers no equipment now says why** — device discovery returned an empty list on
+  any non-200 response without logging anything, so a refused request looked exactly like a pool
+  that genuinely owns no equipment: `total_devices: 0`, and a log containing nothing but the
+  successful authentication. The HTTP status and response body are now logged at WARNING, as is an
+  unusable payload and a legitimately empty pool — the latter pointing at account-level access as
+  the likely cause (Issue #196, @oskarreiners987-commits).
+
+## [2.79.1] - 2026-08-17
+
+### Fixed
+
+- **GenSalt OE iQ mode select stuck on `Off`** — unknown-serial tecnoLC2 units fell to the
+  generic catch-all, which reads c20 as the mode; on tecnoLC2 units c20 is the ORP setpoint
+  (mV), so the select always showed `Off`. The integration now routes by the device
+  `thingType` (available from the first fetch) → correct profile, no bogus mode select.
+  (#195, #199)
+
+## [2.79.0] - 2026-08-16
+
+### Added
+
+- **Zodiac eXO iQ: Aux 1 / Aux 2 schedule entities** — the auxiliary-output
+  schedules (Aux 1 on register c22, Aux 2 on c24, up to two slots each) were
+  never read because the registers were missing from the profile scan, so no
+  schedule entity existed for the aux outputs (Issue #174). The registers are
+  now scanned and decoded per aux, and each slot gets a start time, an end
+  time and an enable switch — writing back to the correct register and
+  preserving the configured windows and modes. Entities are only created for
+  devices whose profile declares the feature, and an empty aux register
+  leaves them unavailable rather than pretending a schedule exists.
+
+## [2.78.7] - 2026-08-16
+
+### Fixed
+
+- **Stale sensor values when the chlorinator goes offline** — the `device_offline` + `last_known_at`
+  staleness guard, previously only on the alarm binary_sensor, now applies to all 8 `sensor_type`
+  values of `FluidraChlorinatorSensor` (ph, orp, salinity, chlorination_actual, water_temperature…).
+  Value sensors now hold the last known reading instead of reporting stale/misleading values during
+  a disconnect. (#194)
 
 ## [2.78.6] - 2026-08-14
 

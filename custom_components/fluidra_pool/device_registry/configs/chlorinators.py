@@ -143,7 +143,14 @@ CHLORINATOR_CONFIGS: dict[str, DeviceConfig] = {
         # the generic config wrongly read c172 as pH 2.13); c165 = pH (7.5); c170 = ORP
         # measured (663 mV, matches the app — c177 = 725 is the uncalibrated raw value);
         # c174 = salinity (3.7 g/L); c10 = chlorination level (100 %).
-        identifier_patterns=["CC25051112*"],
+        # CC26009948 (Issue #195, @albo-yo) — GenSalt OE iQ pH Evo *with ORP kit*, same
+        # tecnoLC2 layout and same live c20: diagnostics show c20 = 700 next to a measured
+        # c170 = 710 mV, so the ORP setpoint is real on this unit. It is listed here rather
+        # than on the ORP-less sibling (cc25052635) for that reason. Until now it fell back
+        # to the generic chlorinator profile, which put the OFF/ON/AUTO mode select on c20 —
+        # so the select read 700, fell through to "Off", and writing On/Auto wrote 1 or 2
+        # into the ORP setpoint.
+        identifier_patterns=["CC25051112*", "CC26009948*"],
         family_patterns=["chlorinator"],
         components_range=25,
         required_components=[0, 1, 2, 3],
@@ -1009,6 +1016,16 @@ CHLORINATOR_CONFIGS: dict[str, DeviceConfig] = {
             # surfaced as an attribute (Issue #175, @Inervo).
             "aux_outputs": {"1": 30, "2": 31},
             "aux_labels": {"1": 90, "2": 91},
+            # Auxiliary-output schedules: fixed registers independent of the pump
+            # type (Aux 1 = c22, Aux 2 = c24), up to 2 slots per aux (Issue #174).
+            "aux_schedule_components": {"1": 22, "2": 24},
+            # ... unless the output is wired to a colour LED, which moves its
+            # schedules to c23/c25 and carries the colour as a componentAction.
+            # That accounts for all seven schedulers the unit declares (c19-c25).
+            # Which register of a pair is live is resolved at runtime, from the
+            # one that holds slots (helpers.resolve_aux_schedule_component).
+            "aux_colour_schedule_components": {"1": 23, "2": 25},
+            "aux_schedule_count": 2,
             # Heating, available once an aux output is assigned to it (c88).
             # c43 is the setpoint in whole °C: an isolated capture moved it
             # 27 -> 23 with nothing else changing (Issue #175, @Inervo).
@@ -1065,6 +1082,10 @@ CHLORINATOR_CONFIGS: dict[str, DeviceConfig] = {
                 19,
                 20,
                 21,
+                22,
+                23,
+                24,
+                25,
                 30,
                 31,
                 35,

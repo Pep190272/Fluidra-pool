@@ -37,13 +37,14 @@ from ..const import (
 )
 from ..device_registry import DeviceIdentifier
 from ..fluidra_api import FluidraPoolAPI
-from ..helpers import determine_pool_access, resolve_schedule_component
+from ..helpers import determine_pool_access, resolve_aux_schedule_component, resolve_schedule_component
 from ..repairs import (
     async_create_connection_issue,
     async_create_unverified_profile_issue,
     async_delete_connection_issue,
     async_delete_unverified_profile_issue,
 )
+from ..write_verification import WriteVerifier
 from ._parsers import calculate_auto_speed_from_schedules, parse_dm24049704_schedule_format
 
 _LOGGER = logging.getLogger(__name__)
@@ -88,6 +89,11 @@ class FluidraDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         scan_interval = DEFAULT_SCAN_INTERVAL
         if config_entry and config_entry.options:
             scan_interval = config_entry.options.get(CONF_SCAN_INTERVAL, DEFAULT_SCAN_INTERVAL)
+
+        # Post-write verification waits several poll cycles before judging a
+        # write, so it has to know how long a cycle lasts here (Issue #133).
+        if (verifier := self._write_verifier) is not None:
+            verifier.set_poll_interval(scan_interval)
 
         super().__init__(
             hass,
@@ -645,6 +651,16 @@ class FluidraDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 except (ValueError, TypeError):
                     pass
         else:
+            # An aux keeps its schedules on one of two registers depending on
+            # what it drives (plain output c22/c24, colour LED c23/c25), so both
+            # are decoded here and the live one is picked after the full scan by
+            # _apply_resolved_aux_schedules (Issue #174).
+            for feature in ("aux_schedule_components", "aux_colour_schedule_components"):
+                for aux_number, aux_component in (DeviceIdentifier.get_feature(device, feature, {}) or {}).items():
+                    if component_id == int(aux_component):
+                        schedule_data = reported_value if isinstance(reported_value, list) else []
+                        device.setdefault("aux_schedule_data", {})[str(aux_number)] = schedule_data
+
             schedule_comp = DeviceIdentifier.get_feature(device, "schedule_component")
             if schedule_comp and component_id == schedule_comp:
                 if isinstance(reported_value, dict) and "programs" in reported_value:
@@ -679,6 +695,29 @@ class FluidraDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         device["schedule_data"] = schedule_data
         device["schedule_component_resolved"] = component_id
         self._track_schedule_count(pool_id, device_id, schedule_data)
+
+    def _apply_resolved_aux_schedules(self, device: dict[str, Any]) -> None:
+        """Point each aux's schedule_data at the register that output honours.
+
+        Aux 1 keeps its slots on c22 when it drives a plain on/off output and on
+        c23 when it drives a colour LED; Aux 2 uses c24/c25 the same way. Both
+        are scanned, so this runs after the full pass and keeps only the live
+        one -- otherwise whichever register happened to come last in scan order
+        would win (Issue #174, @Inervo).
+        """
+        aux_numbers = set(DeviceIdentifier.get_feature(device, "aux_schedule_components", {}) or {})
+        aux_numbers |= set(DeviceIdentifier.get_feature(device, "aux_colour_schedule_components", {}) or {})
+        if not aux_numbers:
+            return
+
+        components = device.get("components", {})
+        resolved: dict[str, int] = {}
+        for aux_number in aux_numbers:
+            component_id = resolve_aux_schedule_component(device, aux_number)
+            reported = components.get(str(component_id), {}).get("reportedValue")
+            device.setdefault("aux_schedule_data", {})[str(aux_number)] = reported if isinstance(reported, list) else []
+            resolved[str(aux_number)] = component_id
+        device["aux_schedule_components_resolved"] = resolved
 
     def _process_victoria_component(
         self, device: dict[str, Any], component_id: int, component_state: dict[str, Any]
@@ -919,6 +958,7 @@ class FluidraDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             else:
                 self._handle_update_success()
                 self._sync_device_firmware(pools)
+                self._verify_pending_writes(pools)
 
             return {pool["id"]: pool for pool in pools}
 
@@ -928,6 +968,60 @@ class FluidraDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             _LOGGER.exception("Error updating Fluidra Pool data")
             self._note_update_failure()
             raise UpdateFailed(f"Error communicating with API: {type(err).__name__}") from err
+
+    @property
+    def _write_verifier(self) -> WriteVerifier | None:
+        """Return the API client's write verifier, when it has one.
+
+        Post-write verification is a diagnostic layer bolted onto the API
+        client, not a contract of it: an API object that predates it (or a test
+        double specced from the class) must never make a poll fail. The
+        isinstance check also keeps a bare Mock from silently standing in.
+        """
+        verifier = getattr(self.api, "write_verifier", None)
+        return verifier if isinstance(verifier, WriteVerifier) else None
+
+    @property
+    def lost_writes(self) -> list[dict[str, Any]]:
+        """Return the recent control writes the cloud accepted but never applied."""
+        verifier = self._write_verifier
+        return list(verifier.lost_writes) if verifier is not None else []
+
+    def _verify_pending_writes(self, pools: list[dict[str, Any]]) -> None:
+        """Judge the control writes whose grace period elapsed, on fresh data.
+
+        The Fluidra cloud confirms a write it never applies (Issue #133), so the
+        write response cannot be trusted — only what the device reports on a
+        later poll can. Reading it here, from the state this cycle just fetched,
+        costs no extra request and is the "normal path" the echo bypasses.
+
+        Devices the cloud reports offline are skipped: their components are the
+        values preserved from an earlier poll, so "unchanged" would say nothing
+        about the write, and the user already sees the device unavailable.
+        """
+        verifier = self._write_verifier
+        if verifier is None:
+            return
+        due = verifier.due()
+        if not due:
+            return
+
+        components_by_device: dict[str, dict[str, Any]] = {}
+        access_by_device: dict[str, str | None] = {}
+        for pool in pools:
+            access_level = pool.get("access_level")
+            for device in pool.get("devices", []):
+                device_id = device.get("device_id")
+                if not device_id or device.get("online") is False:
+                    continue
+                components = device.get("components")
+                components_by_device[str(device_id)] = components if isinstance(components, dict) else {}
+                access_by_device[str(device_id)] = access_level if isinstance(access_level, str) else None
+
+        for pending in due:
+            component = components_by_device.get(pending.device_id, {}).get(str(pending.component_id))
+            reported = component.get("reportedValue") if isinstance(component, dict) else None
+            verifier.resolve(pending, reported, access_by_device.get(pending.device_id))
 
     def _apply_online_flag(self, device: dict[str, Any], device_id: str, connected: bool) -> None:
         """Debounce the cloud connectivity flag before it gates availability.
@@ -1098,6 +1192,7 @@ class FluidraDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             # everyone else keeps the single fixed register (Issue #174).
             if DeviceIdentifier.get_feature(device, "schedule_component_map", None):
                 self._apply_resolved_schedule(device, pool_id, device_id)
+            self._apply_resolved_aux_schedules(device)
 
             # Recompute auto-mode pump speed AFTER the whole component scan: the
             # speed (component 11) is processed before the schedule (component 20)

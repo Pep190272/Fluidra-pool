@@ -61,8 +61,22 @@ class DevicesMixin(FluidraAPIBase):
         params = {"poolId": pool_id, "format": "tree"}
 
         try:
-            status, devices_data, _ = await self._request("GET", DEVICES_ENDPOINT, headers=headers, params=params)
+            status, devices_data, raw_text = await self._request(
+                "GET", DEVICES_ENDPOINT, headers=headers, params=params
+            )
             if status != 200:
+                # Surface the rejection at WARNING so it reaches HA's system log:
+                # returning [] silently makes a refused discovery indistinguishable
+                # from a pool that genuinely owns no equipment, which is exactly
+                # what a reporter sees as "total_devices: 0" with nothing in the
+                # log to explain it (Issue #196). Same reasoning as the failed-write
+                # logging added for Issue #89.
+                _LOGGER.warning(
+                    "Device discovery for pool %s rejected by Fluidra (HTTP %s): %s",
+                    pool_id,
+                    status,
+                    raw_text[:300],
+                )
                 return []
         except FluidraError as err:
             _LOGGER.warning("Failed to discover devices for pool %s: %s", pool_id, err)
@@ -73,7 +87,22 @@ class DevicesMixin(FluidraAPIBase):
         elif isinstance(devices_data, dict):
             pool_devices = devices_data.get("devices", [])
         else:
+            _LOGGER.warning(
+                "Device discovery for pool %s returned an unusable payload of type %s",
+                pool_id,
+                type(devices_data).__name__,
+            )
             return []
+
+        if not pool_devices:
+            # A pool with no equipment is legitimate, but it is also what a
+            # silently-filtered response looks like — say so once rather than
+            # leaving the user to guess (Issue #196).
+            _LOGGER.warning(
+                "Fluidra returned no equipment for pool %s. If the official app shows devices for "
+                "this pool, the account may not have equipment-level access to them.",
+                pool_id,
+            )
 
         # De-duplicate by device_id: the Fluidra tree endpoint can return the same
         # physical device twice — an ``offline`` cloud-shadow entry and a live
@@ -139,6 +168,11 @@ class DevicesMixin(FluidraAPIBase):
                                 # entity, gated on these keys by the select platform.
                                 "variable_speed": child_is_pump,
                                 "pump_type": "variable_speed" if child_is_pump else child_device_type,
+                                # The cloud's model signature (e.g. "tecnoLC2"). Carried over
+                                # from the tree so profile routing works at entity-creation
+                                # time — the status tree that also holds it is only attached
+                                # on the second poll, long after setup (Issue #195).
+                                "thing_type": str(child_device.get("thingType", "")),
                             },
                         )
                 continue
@@ -162,6 +196,8 @@ class DevicesMixin(FluidraAPIBase):
                     "speed_percent": 0,
                     "variable_speed": True,
                     "pump_type": "variable_speed",
+                    # See above (Issue #195).
+                    "thing_type": str(device.get("thingType", "")),
                 },
             )
 

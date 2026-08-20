@@ -6,10 +6,14 @@
       "reconfigure_successful": "Configuración actualizada correctamente"
     },
     "error": {
+      "account_not_confirmed": "Esta cuenta aún no ha sido confirmada. Abre la app Fluidra Pool, completa la verificación del correo que te envió Fluidra y vuelve a intentarlo.",
+      "account_not_found": "No existe ninguna cuenta de Fluidra con este correo en los servidores EMEA (Europa). Comprueba que no haya errores al escribirlo — y ten en cuenta que las cuentas registradas fuera de EMEA aún no son compatibles.",
       "cannot_connect": "No se puede conectar a la API de Fluidra",
       "invalid_auth": "Error de inicio de sesión. Verifica tu correo y contraseña. Si tu cuenta está registrada fuera de la región EMEA (Europa), no es compatible actualmente.",
       "invalid_mfa_code": "Código de verificación inválido o caducado. Inténtalo de nuevo.",
       "no_pools": "No se encontraron piscinas. Asegúrate de que tus equipos estén configurados en la app Fluidra Pool",
+      "password_reset_required": "Fluidra exige restablecer la contraseña de esta cuenta. Restablécela en la app Fluidra Pool o en la web de Fluidra y luego inicia sesión aquí con la nueva.",
+      "too_many_attempts": "Demasiados intentos de inicio de sesión. Fluidra ha bloqueado temporalmente esta cuenta — espera unos minutos antes de volver a intentarlo.",
       "unknown": "Error inesperado"
     },
     "step": {
@@ -322,6 +326,9 @@
       "auto_mode": {
         "name": "Modo Auto"
       },
+      "aux_schedule_enable": {
+        "name": "Aux {aux_number} Horario {schedule_id}"
+      },
       "boost_mode": {
         "name": "Modo Turbo"
       },
@@ -348,6 +355,12 @@
       }
     },
     "time": {
+      "aux_schedule_end": {
+        "name": "Aux {aux_number} Horario {schedule_id} Fin"
+      },
+      "aux_schedule_start": {
+        "name": "Aux {aux_number} Horario {schedule_id} Inicio"
+      },
       "light_schedule_end": {
         "name": "Programación Luz {schedule_id} Fin"
       },
@@ -453,6 +466,9 @@
     "schedule_overlap": {
       "message": "Esta programación se solapa con otra programación activa"
     },
+    "schedule_overnight_unsupported": {
+      "message": "No se puede definir un horario de {start_time} a {end_time}: la hora de fin debe ser posterior a la de inicio. Un horario no puede cruzar la medianoche: use dos horarios, uno hasta las 23:59 y otro desde las 00:00."
+    },
     "schedule_set_failed": {
       "message": "La llamada a la API de Fluidra falló al establecer el horario para {device_id}"
     },
@@ -461,6 +477,9 @@
     },
     "schedule_vs_pump_unsupported": {
       "message": "No se pueden escribir programaciones en {device_id}: este dispositivo está configurado con una bomba de velocidad variable, cuyas franjas incluyen además una velocidad objetivo que este servicio no puede establecer. Escribir una franja incompleta impide que la aplicación Fluidra cargue el dispositivo. Use la aplicación Fluidra para estas programaciones."
+    },
+    "schedule_write_not_stored": {
+      "message": "No se pueden escribir programaciones en {device_id}: este dispositivo guarda algo distinto de lo enviado — verificado en hardware, las horas y los días vuelven alterados, y el dispositivo aplica la programación alterada. Escribir haría funcionar el equipo a horas no elegidas. Use la aplicación Fluidra para las programaciones de este dispositivo (issue #174)."
     },
     "switch_set_failed": {
       "message": "No se pudo cambiar el estado del interruptor"
