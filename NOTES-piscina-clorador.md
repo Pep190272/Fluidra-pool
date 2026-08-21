@@ -1972,7 +1972,10 @@ deja los bicarbonatos intactos. Es exactamente lo que interesa: se desploma el C
 
 - **Ahora, 21/08:** el escalón pactado, **7,70 → 7,60**, uno solo, y se mide el 23/08. Nunca directo
   a 7,4.
-- **Palanca secundaria disponible:** el TAC entra como `log10`. Llevarlo de 100 a 80 vale **-0,10**
+  **RETRACTADO la misma noche del 21/08 — no se toca la consigna. Ver la sección «21 de agosto,
+  noche»: el lazo está en equilibrio en 7,70 y el equipo ya registró dos `PUMPSTOP PH` el 17/08
+  peleando por una consigna inalcanzable.**
+- **RETRACTADO el 21/08 por la noche, junto con el escalón de pH.** **Palanca secundaria disponible:** el TAC entra como `log10`. Llevarlo de 100 a 80 vale **-0,10**
   de LSI, tanto como el escalón de pH. Es seguro **aquí en concreto** porque hay control activo de
   pH: la bomba mantiene 7,70 sin moverse en 528 muestras, así que la pérdida de tampón no se traduce
   en oscilación. Combinado con el escalón: **+0,61 → +0,41** (o +0,49 → +0,29).
@@ -2310,6 +2313,128 @@ horas de filtración de hoy saldrá mal. Queda anotado aquí para que nadie lo l
 dentro de tres semanas.
 
 
+## 21 de agosto, noche: RETRACTADO el escalón de pH. No se toca la consigna, ni el 23 ni después
+
+Objeción del usuario, textual: *«el pH en la máquina no baja de 7,70; si lo bajo a 7,60 gastaremos pH
+como locos, no sé si es el objetivo a seguir ni ahora ni el 23»*.
+
+**Tiene razón, y la evidencia estaba en la base de datos desde antes de que yo recomendara el
+escalón. Dos veces.**
+
+### Prueba 1 — el lazo está en equilibrio EN 7,70, y le costó llegar
+
+Distribución de **todo** el pH crudo disponible (2.090 muestras válidas):
+
+```
+   pH 7,68     253    12,1 %   #######
+   pH 7,70   1.188    56,8 %   ##################################
+   pH 7,72     130     6,2 %   ###
+                     -------
+   dentro de +/-0,02 de 7,70   75,1 %
+```
+
+Y el registro de alarmas del propio equipo:
+
+```
+17-08 06:24   PUMPSTOP PH   "pH pump has run for too long without reaching the setpoint"
+17-08 12:29   PUMPSTOP PH   idem
+19-08 -> hoy  CERO alarmas
+```
+
+**Ese texto de alarma es exactamente el fallo que el usuario predice.** No es una hipótesis: es lo
+que esta máquina hace, con su propio código de error, cuando se le pide una consigna que no alcanza.
+Está registrado dos veces el 17/08.
+
+Y ya estaba escrito en estas notas el 15/08, sobre el episodio del TAC 240: *«se está obligando al
+equipo a pelear por cinco centésimas inalcanzables. Cada intento son catorce minutos de bomba,
+producto quemado y una alarma más»*. **Se recomendó el escalón olvidando el párrafo propio.**
+
+### Prueba 2 — en una piscina salina, bajar el pH cuesta ácido de forma NO lineal
+
+El pH sube por dos vías: **desgasificación de CO2** y el cátodo de la célula. Y la desgasificación no
+es constante: **cuanto más bajo se sujeta el pH, más lejos está el agua del equilibrio con el CO2, más
+rápido lo expulsa, y más rápido vuelve a subir el pH.**
+
+Sujetar 7,60 no cuesta «un escalón de ácido». Cuesta **más ácido por día, todos los días**, y el
+consumo crece más deprisa que la bajada. Por eso las salinas se llevan en 7,6-7,8 y no en 7,2.
+
+### Prueba 3 — el premio no vale el precio, y la aritmética es concluyente
+
+```
+LSI = pH + TF + CF + AF - K          CF = log10(Ca) - 0,4
+
+hoy                       pH 7,70 · Ca 850   ->  LSI +0,61
+con el escalón            pH 7,60 · Ca 850   ->  LSI +0,51    <- SIGUE incrustante
+tras la renovación        pH 7,70 · Ca 350   ->  LSI +0,22    <- casi equilibrio
+```
+
+**La renovación de 22 m³ vale -0,39 de LSI. El escalón de pH vale -0,10.** El agua nueva hace, sin
+gastar un mililitro de ácido ni tocar ninguna consigna, **casi cuatro veces** lo que hace el escalón.
+
+Y el término que está roto es el del calcio: `CF = 2,53` frente al `2,14` de una piscina normal. **Un
+problema de calcio no se titula con ácido.** El ácido no saca ni un miligramo de calcio del vaso.
+
+### Prueba 4 — el daño colateral: el ácido se come la alcalinidad
+
+El TAC está en 85-110 y establecerlo costó una titulación y dos retractaciones. Quemar ácido para
+sujetar 7,60 lo arrastra hacia abajo. Y **TAC bajo en una salina significa menos tampón, pH más
+inestable, y por tanto MÁS ácido**: la espiral. Con el producto al 38 %, que es donde este proyecto
+ya estuvo cerca del desastre.
+
+### Y cae también la palanca del TAC que se propuso esta tarde
+
+Se había ofrecido como alternativa *«llevar el TAC de 100 a 80 vale -0,10 de LSI, tanto como el
+escalón de pH»*. **También se retira.** Bajar TAC se hace con el mismo ácido y desestabiliza el mismo
+lazo, para el mismo premio de 0,10 que no cambia el veredicto. Era el mismo error con otro nombre.
+
+### Decisión
+
+> **NO SE TOCA NINGUNA CONSIGNA QUÍMICA.** Ni el pH, ni el TAC, ni el nivel de cloración.
+> El lazo lleva desde el 19/08 con cero alarmas y el pH clavado en 7,70 con excursión de 0,02 en
+> 528 muestras. **Ese equilibrio costó tres semanas y no se rifa por 0,10 de LSI.**
+
+Lo que se hace hasta el cierre de temporada:
+
+1. **Nada químico.** Consigna 7,70. Se deja trabajar.
+2. **Relleno solo por el grifo interior blando.** Congela el trinquete. Es gratis.
+3. **Célula a ojo cada mes.** Baño de ácido solo si se ve incrustada, nunca preventivo.
+4. **Renovación de 22 m³ al cierre.** Ahí está el -0,39.
+
+Y el **23/08 pasa a ser una MEDIDA, no una intervención**: comprobar que el lazo sigue plano, que la
+dureza no se ha movido y que nadie ha rellenado por el grifo duro. Si los tres salen bien, no se toca
+nada y se cierra.
+
+> **Regla de método, y es la más cara del proyecto:** cuando un lazo de control lleva semanas
+> peleando y por fin encuentra su equilibrio, **el equilibrio es el activo**. Una mejora marginal que
+> obliga a reabrir el lazo no es una mejora. Y el que la propone tiene que mirar primero si su propia
+> documentación ya describe el fallo que va a provocar — aquí estaba, escrito el 15/08, seis días
+> antes.
+
+### Hallazgo lateral: las tres entidades `number` mienten al reconectar
+
+Al ir a comprobar la consigna aparece un patrón sistemático. En **cada** reconexión, las tres
+entidades `number` emiten un valor de relleno y ~35 s después el bueno:
+
+```
+                              1er valor (basura)   2º valor (real)
+number.consigna_ph                   7,2                7,7
+number.consigna_orp                  700                750
+number.nivel_de_cloracion              0                 60
+```
+
+Es el **mismo mecanismo** que la mentira de la primera muestra de los sensores, pero en las entidades
+de control — y ahí es peor, porque un `0` en el nivel de cloración o un `7,2` en la consigna leídos
+por una automatización pueden disparar una acción sobre un valor que nunca existió.
+
+Consigna real asentada: **pH 7,70 · ORP 750 · cloración 60 %.**
+
+**Pendiente menor:** el `friendly_name` de la entidad de pH es la cadena literal `PH 7.6`, estática
+desde que hay registro, mientras el estado asienta en 7,7. No se ha podido determinar si es una
+etiqueta que devuelve la nube o un valor real desincronizado. **Comprobar en el panel qué consigna de
+pH muestra el equipo.** Si el panel dijera 7,6, todo lo de arriba se refuerza: el lazo llevaría
+semanas sujetando una décima por encima de su consigna, que es justo la definición de inalcanzable.
+
+
 ## Lección de método de la semana
 
 Lo que ha decidido cada resultado de estos siete días **no ha sido la química**. Ha sido el **punto
@@ -2325,6 +2450,9 @@ Reglas que quedan escritas:
   del EDTA se apaga a dureza alta y se sobre-titula persiguiendo un color que ya no vuelve.
 - **Una tira se fotografía pegada al bote y a la sombra.** Con luz cálida el balance de blancos
   convierte el verde-azulado en oliva, y ahí está justo la diferencia entre 180 y 40.
+- **Un lazo de control en equilibrio ES el activo.** Cuando lleva semanas peleando y por fin se
+  asienta, una mejora marginal que obliga a reabrirlo no es una mejora. Y antes de proponerla hay
+  que mirar si la documentación propia ya describe el fallo que va a provocar.
 - **Una predicción solo vale como prueba si DISCRIMINA entre los modelos rivales.** La del `unknown`
   del 20/08 acertó y su modelo estaba mal: pedía «varios minutos después», y ese listón lo pasaban los
   dos modelos por igual.
