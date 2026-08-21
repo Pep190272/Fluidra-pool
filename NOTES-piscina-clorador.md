@@ -1740,6 +1740,13 @@ motivo, y el motivo importa porque dice cuánto vale cada número.
 Contraste que lo valida: la parada de las 02:01:47, con el disco 6,7 min adelantado, implica corte
 real hacia la 01:53 y unos 8 min de caché. Encaja.
 
+> **RETRACTADO EL 21/08. TODO ESTE BLOQUE DE LA CACHÉ ESTÁ MAL.** Al leer el recorder se ve que el
+> ORP **sigue cambiando de valor** durante la supuesta ventana de caché, en las **dos** paradas del
+> 20/08. Una caché sirve el último valor conocido: no inventa valores nuevos. El modelo bueno es
+> otro y más simple — **el disco cierra el contacto ~6,7 min antes de la marca y lo abre EN la
+> marca**, como cualquier temporizador de leva. Sin caché. Ver la sección «21 de agosto, tarde».
+> El «encaja» de arriba era un residuo ajustado a mano, que es justo como se cuela un modelo falso.
+
 ### Decisión: el disco NO se vuelve a tocar
 
 6,7 minutos sobre bloques de 5 horas es un **2,2 %**. No cambia las 15 h/día, no cambia el suelo del
@@ -2045,9 +2052,187 @@ son 30, muy por debajo de los **150 a los que el agua ataca la lechada del gresi
 era imposible pasarse; ahora no. **El objetivo es 300-400 mg/L y se para ahí**, midiendo con el
 reactivo, no a ojo.
 
-- Sigue pendiente del 20/08: el **ORP del arranque de las 13:00** (predicho 645-660) y la **hora del
-  `unknown`** del corte de las ~10:53, ambos del recorder.
+- ~~ORP del arranque de las 13:00 y hora del `unknown`~~ -> **LEIDOS. Ver abajo — y ojo, la segunda
+  lectura tumba el modelo de la cache.**
 - Sigue pendiente: el **issue para `foXaCe/Fluidra-pool`** con los tres hallazgos reutilizables.
+
+## 21 de agosto, tarde: las dos lecturas del recorder — y la caché de la nube no existe
+
+Antes de las lecturas, un hallazgo que no es de química y que vale más que las dos.
+
+### AVISO: Home Assistant llevaba 26 horas caído
+
+```
+docker ps -a  ->  homeassistant   Exited (137)   hace 25 h
+RestartPolicy = unless-stopped  |  ExitCode 137  |  OOMKilled = false
+FinishedAt   = 2026-08-20 17:00:58 (local)
+última fila del recorder = 20-08 17:00:25
+```
+
+**La piscina siguió funcionando; el registro no.** Del 20/08 17:00 al 21/08 18:00 no hay ni una
+muestra. Con `unless-stopped` y código 137, el contenedor no se cayó solo: recibió un `docker stop`
+que agotó el plazo y acabó en SIGKILL — y `unless-stopped` hace exactamente lo que dice, que es no
+volver a levantarlo después.
+
+> **Regla nueva, y va al chequeo semanal del Calendar:** este proyecto entero se sostiene sobre el
+> recorder. Un contenedor parado no dispara ninguna alarma, no enciende ninguna luz y no se nota
+> hasta que hace falta un dato que ya no existe. Se comprueba TODAS LAS SEMANAS.
+
+Suerte: las dos lecturas pendientes eran del 20/08 por la mañana, así que estaban dentro.
+
+### Lectura 1 — la hora del `unknown`: 10:59:36
+
+```
+20-08 00:00:20   off
+20-08 02:01:47   unknown      fin del bloque nominal de las 02:00
+20-08 05:53:19   off          arranque del bloque nominal de las 06:00
+20-08 10:59:36   unknown      fin del bloque nominal de las 11:00
+20-08 12:53:22   off          arranque del bloque nominal de las 13:00
+```
+
+La predicción decía: *el `unknown` tiene que caer varios minutos DESPUÉS de las 10:53*. Cae a las
+**10:59:36**, 6 min 16 s después. **Literalmente acertada.** Y sin embargo el modelo que la generó
+está mal, y se ve al ponerla al lado de las otras tres transiciones.
+
+### La retractación: no hay caché de varios minutos. El disco arranca antes y para en hora
+
+```
+                 nominal    observado     desvío
+arranque 06:00    06:00     05:53:19     -6m41s
+arranque 13:00    13:00     12:53:22     -6m38s
+parada   02:00    02:00     02:01:47     +1m47s
+parada   11:00    11:00     10:59:36     -0m24s
+```
+
+**Los arranques van 6,7 min adelantados y son consistentes entre sí. Las paradas van EN HORA, ±2 min.**
+
+El modelo del 20/08 decía otra cosa: *disco 6,7 min adelantado en todo* **más** *caché de la nube de
+6-8 min en las paradas*. Ese modelo necesita que la caché valga 6 m 17 s en una parada y 8 m 28 s en
+la otra, ajustada a medida para tapar el residuo. Eso ya era sospechoso. Pero lo que lo mata es esto:
+
+```
+parada nominal 02:00 — corte "real" según el modelo viejo = 01:53:19
+   01:53:17   692        <- de aquí en adelante el equipo estaría SIN CORRIENTE
+   01:54:57   693        <- VALOR NUEVO
+   02:00:03   694        <- VALOR NUEVO
+   02:01:47   unknown
+
+parada nominal 11:00 — corte "real" según el modelo viejo = 10:53:19
+   10:53:21   678        <- de aquí en adelante estaría SIN CORRIENTE
+   10:56:45   677        <- VALOR NUEVO
+   10:59:36   unknown
+```
+
+**Una caché sirve el último valor conocido: no inventa valores nuevos.** Y aquí el ORP se mueve —en
+las DOS paradas, no en una— durante la ventana en la que el equipo supuestamente ya estaba muerto.
+La única lectura que explica esos cambios es la simple: **el equipo seguía funcionando y midiendo,
+porque el corte todavía no había ocurrido.**
+
+**Modelo nuevo:** el disco **cierra el contacto ~6,7 min antes de la marca y lo abre en la marca**.
+Es el comportamiento normal de un temporizador mecánico de leva: el rodillo monta sobre la pestaña
+antes del borde marcado, pero cae justo en el borde. Un solo mecanismo, sin caché, y explica las
+cuatro transiciones sin ajustar nada a mano.
+
+### Lo que cambia con la retractación
+
+**1. La filtración real es MÁS LARGA de lo programado, no está desplazada.** Cada bloque gana 6,7
+min por delante y no pierde nada por detrás: con tres bloques, **+20 min/día** de filtración
+regalados. Es una propina, no un defecto.
+
+**2. La decisión «el disco no se toca» sigue en pie, y ahora mejor fundada.** Antes se justificaba
+diciendo que 6,7 min sobre 5 h es un 2,2 % despreciable. Ahora se justifica mejor: no hay nada que
+corregir, porque las paradas ya caen en hora y los arranques regalan tiempo.
+
+**3. La regla «usa el arranque, nunca la parada» se relaja.** Las paradas son buenas a ±2 min. Lo
+que sigue siendo cierto es la incertidumbre de un sondeo (34 s) en ambas.
+
+**4. Y la más importante: se cae uno de los tres hallazgos que iban al issue del upstream.** Estaba
+a punto de publicarle a desconocidos que *«la nube de Fluidra sirve el último valor cacheado tras un
+corte de corriente y retrasa minutos la transición a `unknown`»*. **No hay evidencia de eso.** Lo que
+sí hay, sólido y reproducible, es otra cosa, y es la que se publica: **la primera muestra después de
+cada reconexión miente.**
+
+> **Regla de método:** una predicción puede acertar y su modelo estar mal a la vez. La del `unknown`
+> acertó porque solo pedía «varios minutos después», y ese listón lo pasan los dos modelos. Una
+> predicción solo vale como prueba si **discrimina**. La que discriminaba —¿cambian los valores
+> durante la supuesta caché?— no se llegó a formular, y estaba en los mismos datos desde el primer
+> día.
+
+### Lectura 2 — ORP del arranque de las 13:00: 659 mV
+
+```
+12:53:22   694    <- PRIMERA MUESTRA. Miente, como siempre.
+12:54:30   659    <- primer dato real
+12:55:03   664
+12:56:12   667
+12:57:22   669  ...
+```
+
+La primera muestra tras cada reconexión no vale: aquí da 694 cuando el valor real es 659, y el pH de
+esa misma fila da **7,50** cuando el real es 7,70. Es la regla vieja del proyecto —*descartar siempre
+la primera lectura*— confirmada una vez más, y ahora con dos sensores a la vez en la misma fila.
+
+**Predicción: 645-660. Medido: 659. ACIERTO**, pegado al borde superior.
+
+Y el coste real del hueco de filtración:
+
+```
+último valor antes de parar   (10:59:36)   677 mV
+primer valor real al arrancar (12:54:30)   659 mV
+                                           ------
+pérdida en 1 h 53 min sin filtrar           18 mV    (~9,5 mV/h)
+```
+
+Contra los **~30 mV predichos** y los **36 mV / 2 h medidos el 15/08**. **El agua consume la mitad
+que entonces.** Encaja con todo lo demás: célula limpia, cero alarmas, pH plano.
+
+**Veredicto del hueco 11-13: NO es un problema.** 659 está por encima del umbral de desinfección de
+650, y a las 14:00 el ORP ya está en 674 con puntas de 705. No se toca nada.
+
+> **La rejilla volvió a fallar, por segunda vez en dos días.** Decía `>660 -> bien`, `<650 -> mal`, y
+> el dato cayó en **659**, justo en el agujero. Igual que el 20/08 con el desfase del disco. **Cuando
+> una rejilla de interpretación solo tiene casillas discretas, el dato acaba cayendo entre dos.** La
+> rejilla se escribe con el umbral físico (650), no con dos casillas y un hueco en medio.
+
+### El bloque de las 13:00 del 20/08, hasta que HA se murió
+
+```
+                 n     primera (12:53)   última (17:00)   min     max    media
+ORP            380      659*              674             659     705    673,6
+pH             380      7,70*             7,70            7,70    7,72     7,70
+salinidad      378      5,71              5,66            5,27    6,55     5,65
+temp agua      380      29,7              29,5            29,5    29,7     29,6
+                                                  * descartada la 1ª muestra
+```
+
+pH clavado en 7,70 con una excursión máxima de 0,02 en cuatro horas. Cero alarmas.
+
+### Regalo para el issue del upstream: `cloro_libre` no ha existido nunca
+
+```sql
+select state, count(*) from states where metadata_id = (cloro_libre) group by state;
+
+   unavailable    3
+   NULL           1
+```
+
+**Ni un solo valor numérico en toda la vida de la base de datos**, desde el 10/08. No es que el
+sensor falle a ratos: es que el tecnoLC2 no tiene sonda de cloro libre. Dos sondas, pH y ORP. Esto
+sí se publica, y con esta consulta como prueba.
+
+### Receta: leer el recorder con Home Assistant PARADO
+
+Con el contenedor caído no se puede `docker exec`. Y da igual: el volumen sigue ahí y el fichero
+está limpio (sin `-wal`, porque el proceso murió después de cerrarlo).
+
+```bash
+docker cp homeassistant:/config/home-assistant_v2.db ./ha.db   # funciona con el contenedor parado
+python -c "import sqlite3; sqlite3.connect('file:ha.db?mode=ro', uri=True)"
+```
+
+`last_updated_ts` es epoch **UTC**; para leerlo en local hay que sumarle las 2 h del CEST. Todas las
+horas de esta sección ya están convertidas.
+
 
 ## Lección de método de la semana
 
@@ -2064,5 +2249,12 @@ Reglas que quedan escritas:
   del EDTA se apaga a dureza alta y se sobre-titula persiguiendo un color que ya no vuelve.
 - **Una tira se fotografía pegada al bote y a la sombra.** Con luz cálida el balance de blancos
   convierte el verde-azulado en oliva, y ahí está justo la diferencia entre 180 y 40.
+- **Una predicción solo vale como prueba si DISCRIMINA entre los modelos rivales.** La del `unknown`
+  del 20/08 acertó y su modelo estaba mal: pedía «varios minutos después», y ese listón lo pasaban los
+  dos modelos por igual.
+- **Una rejilla de interpretación con casillas discretas acaba dejando el dato en medio.** Pasó dos
+  días seguidos. Se escribe con el umbral físico, no con dos casillas y un hueco.
+- **Un contenedor parado no avisa.** El recorder es la base de todo el proyecto y su caída es
+  silenciosa: 26 h sin datos y nadie se enteró. Se comprueba en calendario, no por intuición.
 - **Antes de dosificar, leer la etiqueta del envase que hay hoy**, no la del que había cuando se
   escribió el plan.
