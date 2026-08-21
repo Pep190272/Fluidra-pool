@@ -2495,6 +2495,39 @@ real de la entidad es `native_min_value = 7.0` / `native_max_value = 7.8`. Se co
 > las dos la escribió un humano**. Aquí una era un registro del equipo y la otra un campo de texto de
 > la interfaz. Se estuvo a punto de reabrir el diagnóstico entero por una etiqueta.
 
+### Las dos acciones que salieron de aquí
+
+**1. Entidad renombrada.** Se ha quitado el nombre propio `PH 7.6` del registro de entidades para
+que vuelva al traducido. Copia previa en `/config/.storage/core.entity_registry.bak-20260821`; HA
+parado para editar (el registro se reescribe desde memoria si está vivo) y arrancado después.
+Comprobado: `friendly_name = 'Chlorinator Consigna pH'`, ya simétrico con su hermana de ORP.
+
+Quedan otros dos renombrados a mano, y esos se dejan porque no engañan: `Nivel de cloro` y `Turbo`.
+
+**2. PR de CÓDIGO al upstream: foXaCe/Fluidra-pool#209.** Cambia los cuatro `return` inventados por
+`return None`, para que la entidad lea `unknown` en vez de fabricar un número.
+
+Y un detalle que obliga a plantearla con cuidado: **el comportamiento era deliberado y estaba
+testeado.** El test se llamaba `test_ph_setpoint_default_when_no_reading` con docstring *"Missing
+reading falls back to 7.2 rather than returning None"*. Así que en la PR se dice de frente que se
+está cambiando un contrato existente, se actualizan **los cuatro tests que ya había** en vez de
+añadir otros, y se ofrece cerrarla si el mantenedor ve una razón que no se ha visto.
+
+El argumento más fuerte no es de opinión: **`FluidraHeatingSetpoint`, en el mismo módulo, ya devuelve
+`None`**, y `test_heating_setpoint.py` lo exige. El código se contradecía a sí mismo.
+
+Comprobaciones antes de mandarla: `ruff check` limpio, `ruff format` 120 ficheros ya formateados,
+**`pytest` 1.858 tests en verde** y `mypy` con los mismos 11 errores preexistentes, ninguno nuevo.
+
+> **Nota de entorno:** la suite NO se puede correr desde el arbol de trabajo en Windows. El repo
+> lleva `custom_components/fluidra_pool/select/aux.py` y **`AUX` es un nombre de dispositivo DOS
+> reservado**, así que ese fichero no existe en disco y fallan 9 ficheros al recolectar. La receta
+> que sí funciona: clonar dentro de un contenedor Linux y correrla ahí.
+>
+> ```bash
+> docker run --rm -v "$PWD:/src:ro" python:3.14 bash -c >   "git clone -q -b <rama> /src /work && cd /work && pip install -q -r requirements_test.txt && pytest -q"
+> ```
+
 
 ## Lección de método de la semana
 
