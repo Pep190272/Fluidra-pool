@@ -2002,6 +2002,8 @@ Reglas que quedan escritas:
 - **Descartar siempre la primera lectura de cualquier instrumento** de esta instalación.
 - **Una tira solo vale si algo que no es una tira la confirma.**
 - **En una titulación se lee la meseta de mezcla, nunca el mínimo.**
+- **Una titulación que pasa de 40 gotas sin diluir es una COTA SUPERIOR, no una medida.** El viraje
+  del EDTA se apaga a dureza alta y se sobre-titula persiguiendo un color que ya no vuelve.
 - **Una tira se fotografía pegada al bote y a la sombra.** Con luz cálida el balance de blancos
   convierte el verde-azulado en oliva, y ahí está justo la diferencia entre 180 y 40.
 - **Antes de dosificar, leer la etiqueta del envase que hay hoy**, no la del que había cuando se
