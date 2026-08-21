@@ -1879,6 +1879,118 @@ las 10:53, nunca antes.
   con las transiciones del `binary_sensor` de alarma. Nada de eso necesita datos de la casa.
 - **23/08, 09:00** — revisión completa del agua. El ORP sigue siendo el número.
 
+## 21 de agosto: la dureza cálcica, por fin con un reactivo — 850 mg/L, y la tira queda enterrada
+
+Era el dato **pendiente desde el 17/08**, el que bloqueaba la decisión de la consigna de pH y el
+criterio de parada del contralavado. Kit EDTA comprado el 20/08. Muestra: **agua de la piscina**.
+
+```
+viraje ROSÁCEO (hay cal) -> AZUL
+1 gota = 1 °fH
+85 gotas  =  85 °fH  =  850 mg/L CaCO3
+```
+
+### El LSI, recalculado
+
+Con las condiciones reales de la instalación — pH 7,70 (consigna, sin moverse en 528 muestras),
+29 °C, TAC 85-110 por titulación del 17/08, sal 5,6 g/L:
+
+```
+LSI = pH + TF + CF + AF - K
+
+TF(29 °C = 84 °F) = 0,70
+CF = log10(Ca como CaCO3) - 0,4
+AF = log10(TAC)
+K  = 12,32   <- constante de sólidos disueltos para agua salada ~5,6 g/L.
+                Se fija por retroajuste al LSI +0,18 que este mismo proyecto
+                calculó el 19/08 con dureza 300 y 30 °C. Misma constante,
+                mismos números: las comparaciones de abajo son homogéneas.
+```
+
+| Escenario | Ca (mg/L) | CF | LSI (TAC 100) | LSI (rango TAC 85-110) |
+|---|---|---|---|---|
+| 850 es **calcio** | 850 | 2,529 | **+0,61** | +0,54 a +0,65 |
+| 850 es **total**, Ca = 76 % | 650 | 2,413 | **+0,49** | +0,42 a +0,53 |
+| la vieja tira | 300 | 2,077 | +0,16 | +0,09 a +0,20 |
+
+**Los dos escenarios reales dicen lo mismo: agua claramente incrustante.** La ambigüedad
+calcio/total no cambia ninguna decisión, así que no bloquea nada.
+
+### Ambigüedad que queda abierta (y que no importa para decidir)
+
+El viraje rosa → azul **no desambigua por sí solo**:
+
+- En kits de piscina tipo Taylor (R-0010 tampón + R-0011L indicador + R-0012 titulante) el
+  rojo → azul **ES** la titulación de **calcio**: el tampón lleva la muestra a pH 12-13 y el
+  magnesio precipita como hidróxido.
+- Con negro de eriocromo T a pH 10, el rojo vino → azul es dureza **TOTAL**.
+
+Para cerrarlo hay que mirar si el kit dice «calcio» y si lleva **dos reactivos previos** al
+titulante. Se anota como pendiente menor.
+
+### Correcciones y consecuencias
+
+**1. La tira queda enterrada.** Los 300 del parche eran falsos. El 800 al que derivaba el parche
+—que el 20/08 se descartó como artefacto— estaba **más cerca de la verdad que el 300**. Confirma
+la regla: *una tira solo vale si algo que no es una tira la confirma*.
+
+**2. El pH deja de ser la palanca.** Es aritmética directa: el pH entra en el LSI sumando, así que
+**bajar 0,10 de pH baja exactamente 0,10 de LSI**. Para llevar +0,61 a cero harían falta **pH 7,10**,
+inaceptable, y con el ácido del 38 % es justo donde este proyecto estuvo cerca del desastre.
+El escalón 7,70 → 7,60 pactado sigue siendo correcto, pero es un **parche, no la solución**.
+
+**3. La palanca real es SACAR CALCIO, y la aritmética duele.** Dilución con relleno blando
+(~0 de dureza), vaso de 40 m³, `C_final = C_inicial × (1 - f)`:
+
+```
+850 -> 400 mg/L   f = 0,53   ->  21,2 m3   (53 % del vaso)
+850 -> 300 mg/L   f = 0,65   ->  25,9 m3   (65 %)
+650 -> 400 mg/L   f = 0,38   ->  15,4 m3   (38 %)
+```
+
+**El goteo de contralavados NO llega.** Con ~0,5 m³ por contralavado harían falta **~42
+contralavados** para los 21,2 m³. A uno por semana, eso no es esta temporada: son ocho meses.
+La frase del 18/08 —«cada contralavado pasa a ser una retirada real de calcio»— es cierta y sigue
+en pie, pero su **magnitud es despreciable** frente al problema medido.
+
+**4. Consecuencia que nadie había contado: la SAL se va con el agua.** El vaso lleva
+`40 m³ × 5,6 g/L = 224 kg` de sal. Reponer el 53 % del agua **se lleva ~119 kg**, unos **5 sacos
+de 25 kg** a reponer. Y el llenado, con el cuello de botella real de la manguera (12 L/min),
+son `21.200 L ÷ 12 ≈ 29 horas` de grifo. Esto no se improvisa una tarde de agosto.
+
+**5. Lo que el relleno blando SÍ conserva: la alcalinidad.** El intercambio iónico quita calcio y
+deja los bicarbonatos intactos. Es exactamente lo que interesa: se desploma el CF sin tocar el AF.
+
+### Decisión
+
+- **Ahora, 21/08:** el escalón pactado, **7,70 → 7,60**, uno solo, y se mide el 23/08. Nunca directo
+  a 7,4.
+- **Palanca secundaria disponible:** el TAC entra como `log10`. Llevarlo de 100 a 80 vale **-0,10**
+  de LSI, tanto como el escalón de pH. Es seguro **aquí en concreto** porque hay control activo de
+  pH: la bomba mantiene 7,70 sin moverse en 528 muestras, así que la pérdida de tampón no se traduce
+  en oscilación. Combinado con el escalón: **+0,61 → +0,41** (o +0,49 → +0,29).
+- **Estructural, al CIERRE DE TEMPORADA, no en agosto:** vaciado parcial del ~50 % con relleno
+  blando, contando los 5 sacos de sal y las ~29 h de manguera. Es el momento en que el vaciado ya
+  toca de todas formas.
+- **Suelo que no se cruza:** 200-400 mg/L. Por debajo de 150 el agua ataca la lechada del gresite.
+  Desde 850 hay recorrido de sobra.
+
+### Aviso de método: no se diluyó
+
+El protocolo mandaba **diluir 50/50 con destilada por encima de 40 gotas** y no se hizo. En EDTA a
+dureza alta el viraje se vuelve lento y se tiende a **sobre-titular** persiguiendo un color que se
+apaga. Por tanto **850 es cota superior**: el valor real puede ser algo menor. No baja a 300.
+
+### Pendiente que deja este día
+
+- **Segunda muestra: grifo interior blando, purgando 20 L.** Es la prueba de fuego del
+  descalcificador **con un número** en vez de con un color, y lo único que puede confirmar o tumbar
+  el hallazgo colorimétrico del 19/08. Sin ella, los 21 m³ de relleno blando son un plan sobre una
+  suposición.
+- Sigue pendiente del 20/08: el **ORP del arranque de las 13:00** (predicho 645-660) y la **hora del
+  `unknown`** del corte de las ~10:53, ambos del recorder.
+- Sigue pendiente: el **issue para `foXaCe/Fluidra-pool`** con los tres hallazgos reutilizables.
+
 ## Lección de método de la semana
 
 Lo que ha decidido cada resultado de estos siete días **no ha sido la química**. Ha sido el **punto
