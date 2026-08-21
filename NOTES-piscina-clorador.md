@@ -1983,10 +1983,68 @@ apaga. Por tanto **850 es cota superior**: el valor real puede ser algo menor. N
 
 ### Pendiente que deja este día
 
-- **Segunda muestra: grifo interior blando, purgando 20 L.** Es la prueba de fuego del
-  descalcificador **con un número** en vez de con un color, y lo único que puede confirmar o tumbar
-  el hallazgo colorimétrico del 19/08. Sin ella, los 21 m³ de relleno blando son un plan sobre una
-  suposición.
+- ~~Segunda muestra: grifo interior blando~~ → **HECHA el mismo día. Ver abajo.**
+
+### La segunda muestra, el mismo día: el descalcificador ABLANDA, y ahora con un número
+
+Grifo interior blando, purgados los 20 L. Sin diluir, y no hizo falta: **3 gotas**.
+
+```
+piscina        85 gotas  =  850 mg/L CaCO3
+grifo blando    3 gotas  =   30 mg/L CaCO3      <- 28 veces menos
+agua de red    ~30 gotas =  ~300 mg/L (tira, 18/08)
+```
+
+**El dato cualitativo vale tanto como el número:** la muestra de la piscina **entra ya rosa
+intenso**; la del grifo blando **entra tirando a azul desde la primera gota**. El indicador solo se
+pone rojo si hay dureza que acomplejar. Ese contraste es la medida antes de contar nada.
+
+Queda **cerrado con número el hallazgo colorimétrico del 19/08** (ΔE 46 en el parche de dureza).
+Dos métodos independientes, mismo veredicto. El descalcificador funciona.
+
+### Los 850 dejan de ser sospechosos: el trinquete cuadra
+
+El 850 se había anotado como *cota superior* por no haber diluido. Con la dureza de red medida,
+la acumulación se puede calcular — y el número deja de necesitar el beneficio de la duda:
+
+```
+evaporación   ->  se va agua PURA, el calcio se queda
+relleno       ->  entra calcio nuevo
+ganancia por temporada = C_relleno x V_relleno / V_vaso
+
+con red DURA (300 mg/L, 20 m3/temporada, vaso 40 m3):
+    300 x 20 / 40  =  +150 mg/L por temporada
+
+con relleno BLANDO (30 mg/L):
+    30 x 20 / 40   =  +15 mg/L por temporada     <- DIEZ VECES MENOS
+```
+
+**A +150 por temporada, llegar a 850 son cinco o seis años sin vaciar.** Encaja exactamente con la
+historia de la instalación. El 850 no es un artefacto de titulación: es un trinquete de años,
+medido. Y el trinquete tiene autor conocido — **el grifo de la piscina, que cuelga aguas arriba
+del descalcificador** (19/08).
+
+### Consecuencias que cambian con este número
+
+**1. El trinquete está roto, pero solo si se respeta la regla del punto de toma.** El relleno
+blando no baja la dureza: la **congela**. Mientras todo el aporte venga del grifo interior, la
+piscina deja de empeorar (+15/temporada es ruido). En cuanto entre una manguera del grifo de la
+piscina, vuelve el +150. **Regla operativa permanente: NUNCA se rellena por el grifo de la
+piscina.**
+
+**2. El plan de renovación apenas se mueve, pero ahora tiene los dos extremos medidos.** Con agua
+de relleno a 30 mg/L en vez de a cero, `C_final = C_inicial (1-f) + C_relleno · f`:
+
+```
+850 -> 400 mg/L   f = 0,549   ->  22,0 m3   (antes se estimó 21,2 con relleno ideal)
+850 -> 300 mg/L   f = 0,671   ->  26,8 m3
+```
+
+**3. Aparece un riesgo que antes era teórico: PASARSE.** Con relleno de 30 mg/L el suelo asintótico
+son 30, muy por debajo de los **150 a los que el agua ataca la lechada del gresite**. Con agua dura
+era imposible pasarse; ahora no. **El objetivo es 300-400 mg/L y se para ahí**, midiendo con el
+reactivo, no a ojo.
+
 - Sigue pendiente del 20/08: el **ORP del arranque de las 13:00** (predicho 645-660) y la **hora del
   `unknown`** del corte de las ~10:53, ambos del recorder.
 - Sigue pendiente: el **issue para `foXaCe/Fluidra-pool`** con los tres hallazgos reutilizables.
