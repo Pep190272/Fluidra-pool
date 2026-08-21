@@ -2234,6 +2234,82 @@ python -c "import sqlite3; sqlite3.connect('file:ha.db?mode=ro', uri=True)"
 horas de esta sección ya están convertidas.
 
 
+### Las dos capas del recorder, y el bloque que faltaba
+
+Al preguntar el usuario si bastaba con «entrar y bajar el histórico», la respuesta corta es **no: no
+existe backfill**. HA sondea cada 34 s y escribe lo que ve. Lo que no vio no está en ninguna parte —
+ni en la base, ni en los logs, ni recuperable de la nube. Las 26 h de ayer no vuelven.
+
+Pero al mirarlo aparece un matiz que cambia el planteamiento. **Son DOS capas, y no se purgan igual:**
+
+```
+                            crudo (1 fila / ~34 s)      estadística horaria (min/max/media)
+sensor.piscina_orp          10-08 -> 20-08              12-06 -> 20-08   (1.488 h)
+sensor.piscina_ph           10-08 -> 20-08              12-06 -> 20-08
+sensor.piscina_salinidad    10-08 -> 20-08              12-06 -> 20-08
+sensor.piscina_temp_agua    10-08 -> 20-08              12-06 -> 20-08
+```
+
+- **El crudo se purga.** `configuration.yaml` no tenía bloque `recorder:`, así que iba con el
+  `purge_keep_days: 10` por defecto. Cuadra al día: `states` empezaba el 10-08 y HA murió el 20-08.
+- **La estadística horaria NO se purga NUNCA.** Hay serie **desde el 12 de junio**.
+
+O sea: las tendencias del día a día sobreviven pase lo que pase. Lo que compra la ventana del crudo
+es poder volver y leer **transiciones al segundo**, que es exactamente lo que se ha hecho hoy con los
+datos del 20/08 y lo que ha permitido tumbar el modelo de la caché.
+
+**Y ya había agujeros de antes:**
+
+```
+horas posibles 12-06 -> 20-08    1.680
+horas con estadística grabada    1.488
+                                 -----
+                                   192 h  =  8 días de serie que no existen
+```
+
+### El bloque puesto (21/08 18:37)
+
+Copia de seguridad previa en `/config/configuration.yaml.bak-20260821`. Validado con
+`python3 -m homeassistant --script check_config -c /config` (exit 0) **antes** de reiniciar.
+
+```yaml
+recorder:
+  purge_keep_days: 30
+```
+
+**Por qué 30 y no más:** medido, no estimado — 61 entidades, 44.749 filas de estados en 10 días =
+~26 MB. A 30 días son ~135.000 filas y ~78 MB, sano para SQLite. Triplica la ventana forense sin que
+la base moleste.
+
+**Por qué no se excluye nada.** Reparto real de la base:
+
+```
+  23.587  sensor.piscina_chlorinator_salinidad     <- 53 % de todo, cambia en cada sondeo
+  10.366  binary_sensor.piscina_chlorinator_alarma <- el que mide las horas de filtración
+   3.117  sun.sun
+   2.336  sensor.piscina_chlorinator_orp
+   2.087  sensor.piscina_chlorinator_ph
+   1.893  sensor.piscina_chlorinator_temperatura_del_agua
+```
+
+Los dos primeros son justo los que no se pueden tocar. Y `sun.sun` tampoco: **la UV es lo que se come
+el cloro**, que es precisamente lo que mide la serie de ORP. Con 61 entidades y 26 MB no hay problema
+de tamaño que resolver, así que filtrar solo habría añadido riesgo de perder algo útil.
+
+> **Regla:** no se optimiza lo que no duele. Excluir entidades «por limpieza» en una base de 26 MB es
+> cambiar un problema que no existe por el riesgo de descubrir dentro de tres meses que hacía falta
+> justo la que se quitó.
+
+### Aviso al reiniciar: la regla se cumplió en directo
+
+El reinicio de las 18:37 dejó su propia transición `off -> unknown -> off` en el `binary_sensor` de
+alarma, y un `unavailable` en todos los sensores.
+
+**Eso NO es una parada del grupo de filtración.** Al leer el 21/08 hay que descontarlo, o la cuenta de
+horas de filtración de hoy saldrá mal. Queda anotado aquí para que nadie lo lea como un corte real
+dentro de tres semanas.
+
+
 ## Lección de método de la semana
 
 Lo que ha decidido cada resultado de estos siete días **no ha sido la química**. Ha sido el **punto
@@ -2254,6 +2330,8 @@ Reglas que quedan escritas:
   dos modelos por igual.
 - **Una rejilla de interpretación con casillas discretas acaba dejando el dato en medio.** Pasó dos
   días seguidos. Se escribe con el umbral físico, no con dos casillas y un hueco.
+- **No se optimiza lo que no duele.** Excluir entidades del recorder «por limpieza» en una base de
+  26 MB cambia un problema inexistente por el riesgo de haber tirado justo la que hacía falta.
 - **Un contenedor parado no avisa.** El recorder es la base de todo el proyecto y su caída es
   silenciosa: 26 h sin datos y nadie se enteró. Se comprueba en calendario, no por intuición.
 - **Antes de dosificar, leer la etiqueta del envase que hay hoy**, no la del que había cuando se
