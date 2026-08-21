@@ -2428,11 +2428,72 @@ por una automatización pueden disparar una acción sobre un valor que nunca exi
 
 Consigna real asentada: **pH 7,70 · ORP 750 · cloración 60 %.**
 
-**Pendiente menor:** el `friendly_name` de la entidad de pH es la cadena literal `PH 7.6`, estática
-desde que hay registro, mientras el estado asienta en 7,7. No se ha podido determinar si es una
-etiqueta que devuelve la nube o un valor real desincronizado. **Comprobar en el panel qué consigna de
-pH muestra el equipo.** Si el panel dijera 7,6, todo lo de arriba se refuerza: el lazo llevaría
-semanas sujetando una décima por encima de su consigna, que es justo la definición de inalcanzable.
+### RESUELTO el mismo día: el `PH 7.6` es una etiqueta que escribió el usuario
+
+Se había dejado como pendiente comprobar si el `PH 7.6` del `friendly_name` era la consigna real.
+**No lo es. Es un nombre tecleado a mano en Home Assistant**, y la sospecha que se había apuntado
+—que el lazo llevara semanas sujetando una décima por encima de su consigna— **era falsa**.
+
+Prueba, de `/config/.storage/core.entity_registry`:
+
+```
+entity_id       : number.piscina_chlorinator_consigna_ph
+unique_id       : fluidra_LC24009904.nn_1_ph_setpoint
+name (override) : 'PH 7.6'        <- escrito por el usuario
+original_name   : 'Consigna pH'   <- el que pone la integración
+```
+
+Cuando se renombra una entidad en HA, el nombre propio sustituye al traducido y además se pierde el
+prefijo del dispositivo. Por eso esta salía `PH 7.6` a secas mientras su hermana salía
+`Chlorinator Consigna ORP`. La asimetría en los nombres era la pista, y apuntaba a HA, no al equipo.
+
+**Confirmación independiente:** el propio `friendly_name` no cambió NUNCA en todo el historial — una
+sola fila, del 10-08 05:29, con el estado en 7,61. Una etiqueta que no se mueve cuando la consigna sí
+se mueve no puede ser la consigna.
+
+### La consigna real, leída del registro del equipo: 7,70
+
+Atributos de la entidad con el estado ya asentado:
+
+```
+read_component     : 16
+write_component    : 16
+current_ph_reading : 7.7
+device_id          : LC24009904.nn_1
+```
+
+**Consigna = 7,70, leída del componente 16 del propio clorador**, no de una etiqueta. Y el agua está
+en 7,70. **El lazo da EXACTAMENTE en su objetivo.**
+
+Eso **refuerza la retractación por una vía distinta a la que se había imaginado**: no es que el
+equipo esté peleando contra una consigna inalcanzable — es que **ha convergido**. Y a un lazo
+convergido no se le mueve el objetivo para ganar 0,10 de LSI que la renovación da cuatro veces.
+
+### Y el 7,2 no era de la nube: está escrito en el código
+
+El valor de relleno que aparece en cada reconexión **lo inventa la integración**, no la nube:
+
+```python
+# custom_components/fluidra_pool/number.py:193
+raw_value = component_data.get("desiredValue", component_data.get("reportedValue"))
+if raw_value is None:
+    return 7.2  # Default value        <- lineas 194 y 202
+```
+
+Y lo mismo para el ORP, con **700,0** en las líneas **387 y 392**. Cuadra clavado con lo observado
+(7,2 → 7,7 y 700 → 750 en cada reconexión).
+
+**Esto ya no es una rareza de la nube: es un defecto de código.** Una entidad de CONTROL que devuelve
+un número inventado cuando no tiene dato debería devolver `None`, para que HA muestre `unknown` y
+cualquier automatización sepa que no hay valor. Devolver `7.2` hace indistinguible «no sé» de «la
+consigna es 7,2».
+
+Detalle menor de paso: el atributo `ph_range` está fijado a `"6.8-7.6"` (línea 252) mientras el rango
+real de la entidad es `native_min_value = 7.0` / `native_max_value = 7.8`. Se contradicen.
+
+> **Regla:** cuando dos fuentes discrepan, antes de construir una teoría hay que preguntarse **cuál de
+> las dos la escribió un humano**. Aquí una era un registro del equipo y la otra un campo de texto de
+> la interfaz. Se estuvo a punto de reabrir el diagnóstico entero por una etiqueta.
 
 
 ## Lección de método de la semana
