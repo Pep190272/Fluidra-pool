@@ -2558,6 +2558,75 @@ Comprobaciones antes de mandarla: `ruff check` limpio, `ruff format` 120 fichero
 > Verificado de punta a punta: **1.858 passed en 44 s.**
 
 
+## Cierre del 21 de agosto — 2 h 49 m · el día que se cerró el diagnóstico químico
+
+Ventana 17:04-21:29, 5 tramos, `npm run horas` (BRUTO, que es la cifra que se imputa).
+9 commits. Dos PRs al upstream, una mergeada.
+
+### Lo que entra medido, y no vuelve a discutirse
+
+```
+dureza piscina        850 mg/L   (85 gotas EDTA)
+dureza grifo blando    30 mg/L   (3 gotas)          28 veces menos
+agua de red          ~300 mg/L   (tira, 18/08)
+LSI                  +0,49 a +0,61                  INCRUSTANTE
+consigna de pH real     7,70     (componente 16)    y el agua está en 7,70
+ORP arranque 13:00      659 mV   predicho 645-660   ACIERTO
+coste del hueco de 2 h   18 mV   (no los 30)        el agua consume la mitad
+```
+
+### Las cuatro retractaciones del día
+
+Un día con cuatro es un buen día, no un mal día. Lo malo sería no haberlas encontrado.
+
+1. **La tira de dureza (300).** Enterrada por el reactivo (850). El 800 al que derivaba el parche
+   estaba más cerca de la verdad que el 300, y el 20/08 se descartó por artefacto.
+2. **La caché de la nube de Fluidra.** No existe. El ORP sigue cambiando durante la supuesta ventana
+   de caché, en las dos paradas. El disco cierra el contacto ~6,7 min antes de la marca y lo abre EN
+   la marca. **+20 min/día de filtración regalados**, no un desfase.
+3. **El escalón de pH 7,70 → 7,60, y la palanca del TAC.** Las tumbó el usuario, y con razón. Se
+   recomendaron olvidando un párrafo escrito seis días antes en este mismo fichero.
+4. **La sospecha del `PH 7.6`.** Era una etiqueta tecleada a mano en Home Assistant. Se estuvo a
+   punto de reabrir el diagnóstico entero por un campo de texto de la interfaz.
+
+### Lo que se hizo, además de medir
+
+- **Home Assistant**, que llevaba **26 h caído** sin que nadie se enterara. Levantado, y bloque
+  `recorder: purge_keep_days: 30` puesto (validado con `check_config` antes de reiniciar).
+- **Cinco avisos periódicos en Calendar**, incluida la **bomba auxiliar 15 min al mes** para que no
+  se agarrote y la **sal del descalcificador**, que es el origen de los 850.
+- **PR #206 al upstream: MERGEADA.** Tres hallazgos que sirven a cualquiera con un tecnoLC2.
+- **PR #209 al upstream: abierta.** Fix de código, los cuatro `return` inventados.
+- **`run-tests-linux.ps1`**, porque la suite no corre en Windows y el comando de una línea se partía
+  al pegarlo.
+
+### El plan, que ya no cambia hasta octubre
+
+> **NO SE TOCA NINGUNA CONSIGNA QUÍMICA.** El lazo lleva desde el 19/08 con cero alarmas y el pH
+> clavado en 7,70. Ese equilibrio costó tres semanas.
+
+1. Relleno **solo** por el grifo interior blando. Congela el trinquete. Gratis.
+2. Célula a ojo cada mes. Baño de ácido solo si se ve incrustada, nunca preventivo.
+3. **Renovación de 22 m³ al cierre de temporada.** Ahí está el −0,39 de LSI que el pH no da.
+   Con sus 119 kg de sal a reponer y sus 30 h de manguera.
+
+Y el **23/08 es una MEDIDA, no una intervención**: lazo plano, dureza sin mover, nadie ha rellenado
+por el grifo duro. Si los tres salen bien, no se toca nada.
+
+### Las reglas que deja el día
+
+- **Una predicción solo vale como prueba si DISCRIMINA** entre los modelos rivales.
+- **Un lazo de control en equilibrio ES el activo.** Una mejora marginal que obliga a reabrirlo no es
+  una mejora.
+- **Cuando dos fuentes discrepan, preguntá cuál de las dos la escribió un humano.**
+- **No se optimiza lo que no duele.**
+- **Un contenedor parado no avisa.**
+- **Un comando que no cabe en el ancho de la terminal no es un comando, es una trampa.**
+- **Antes de abrir una PR desde un fork con historia propia: `git diff --stat upstream/main...HEAD`.**
+  La primera rama de hoy habría publicado 2.260 líneas de estas notas en un repo público.
+- **Un escaneo de seguridad que corre en el mismo comando que el `push` no frena nada.** Es teatro.
+
+
 ## Lección de método de la semana
 
 Lo que ha decidido cada resultado de estos siete días **no ha sido la química**. Ha sido el **punto
