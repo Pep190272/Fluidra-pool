@@ -2524,7 +2524,22 @@ Comprobaciones antes de mandarla: `ruff check` limpio, `ruff format` 120 fichero
 > reservado**, así que ese fichero no existe en disco y fallan 9 ficheros al recolectar. La receta
 > que sí funciona: clonar dentro de un contenedor Linux y correrla ahí.
 >
-> **En PowerShell, que es la terminal de esta máquina: UNA sola línea y ruta absoluta.**
+> **USA EL SCRIPT, no pegues el comando.** `run-tests-linux.ps1`, en la raíz del repo:
+>
+> ```powershell
+> .\run-tests-linux.ps1
+> .\run-tests-linux.ps1 -Branch fix/number-setpoints-no-fake-defaults
+> .\run-tests-linux.ps1 -PytestArgs "tests/test_number.py -v"
+> ```
+>
+> Sin argumentos usa la rama que esté activa. Verificado: **1.858 passed, exit 0.**
+>
+> **Por qué un script y no una línea.** Se intentó con una línea y **se partió al pegarla**: el
+> salto cayó entre `-r` y `requirements_test.txt`, y salió `-r option requires 1 argument` seguido
+> de `bash: line 2: requirements_test.txt: command not found`. Un comando que no cabe en el ancho
+> de la terminal **no es un comando, es una trampa**. Si hay que pegarlo, va en un fichero.
+>
+> El comando equivalente, para referencia (una sola línea, ruta absoluta):
 >
 > ```powershell
 > docker run --rm -v "D:/Mis_proyectos/Fluidra-pool:/src:ro" python:3.14 bash -c "git clone -q -b <rama> /src /work && cd /work && pip install -q -r requirements_test.txt && pytest -q"
