@@ -2524,9 +2524,23 @@ Comprobaciones antes de mandarla: `ruff check` limpio, `ruff format` 120 fichero
 > reservado**, así que ese fichero no existe en disco y fallan 9 ficheros al recolectar. La receta
 > que sí funciona: clonar dentro de un contenedor Linux y correrla ahí.
 >
-> ```bash
-> docker run --rm -v "$PWD:/src:ro" python:3.14 bash -c >   "git clone -q -b <rama> /src /work && cd /work && pip install -q -r requirements_test.txt && pytest -q"
+> **En PowerShell, que es la terminal de esta máquina: UNA sola línea y ruta absoluta.**
+>
+> ```powershell
+> docker run --rm -v "D:/Mis_proyectos/Fluidra-pool:/src:ro" python:3.14 bash -c "git clone -q -b <rama> /src /work && cd /work && pip install -q -r requirements_test.txt && pytest -q"
 > ```
+>
+> **Tres trampas del copiar-pegar desde bash, las tres pagadas ya:**
+>
+> - `$PWD:/src` **no vale en PowerShell**: lee `$PWD:` como variable con calificador de unidad y
+>   revienta con *«El carácter : no va seguido de un carácter de nombre de variable válido»*. Ruta
+>   absoluta y con barras normales, que es como Docker Desktop la acepta sin discutir.
+> - La barra invertida de continuación de línea es de bash. En PowerShell es acento grave, o una
+>   sola línea — que es lo que se hace aquí.
+> - Los `&&` van **dentro** de las comillas, así que los ejecuta bash dentro del contenedor y no la
+>   terminal. Por eso funciona incluso en PowerShell 5.1, que no soporta `&&` propio.
+>
+> Verificado de punta a punta: **1.858 passed en 44 s.**
 
 
 ## Lección de método de la semana
